@@ -48,6 +48,19 @@ func (d GenFn) CreateSQL() string {
 		d.Name, d.Sig, d.Body)
 }
 
+// DefinersSQL renders the full CREATE OR REPLACE FUNCTION set for the generated
+// definers in dependency order (callee before caller), each via CreateSQL().
+// CREATE OR REPLACE bodies round-trip byte-identical through pg_get_functiondef
+// (the definer oracle proves it), so applying this to a live database is a no-op.
+func DefinersSQL(defs []GenFn) string {
+	var b strings.Builder
+	for _, d := range defs {
+		b.WriteString(d.CreateSQL())
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
 // EmitDefiners generates every definer the spec's policies reference, in
 // dependency order (a fn appears after the fns it calls).
 func (s *Spec) EmitDefiners() ([]GenFn, error) {
