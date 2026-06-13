@@ -68,6 +68,11 @@ func TestBinds_ExplicitPlaneBindingDrivesClaims(t *testing.T) {
 	if !strings.Contains(sel.Using, "->> 'admin_sub'") {
 		t.Errorf("role definer did not use the bound admin claim:\n%s", sel.Using)
 	}
+	// The role-definer affix derives from the admin plane NAME (`staff`), not a
+	// baked "admin" (EID-265 WS2 function-naming lift).
+	if !strings.Contains(sel.Using, "staff_has_doc_role(") {
+		t.Errorf("role-definer affix did not derive from the admin plane name `staff`:\n%s", sel.Using)
+	}
 }
 
 // Ambiguity is an error: the binding replaces the former first-match shape pick,

@@ -140,6 +140,20 @@ func (s *Spec) adminIdentify() string {
 	return "sub"
 }
 
+// adminName returns the NAME of the role-resolution (admin) plane subject — the
+// `binds admin` subject (EID-265 WS2). It supplies the role-definer affix
+// (is_<level>_<adminName> / <adminName>_has_<obj>_role) so the generated names
+// reflect the spec's own admin plane, not a baked "admin". Defaults to "admin"
+// (Foir's admin subject IS named "admin", so its definer names are unchanged).
+func (s *Spec) adminName() string {
+	for _, sub := range s.Subjects {
+		if sub.Binds == "admin" {
+			return sub.Name
+		}
+	}
+	return "admin"
+}
+
 // scopeCol returns the physical column for a topology level on this object: a
 // level-entity object uses its own `id` for its level (it IS that node);
 // everything else carries the `<level>_id` FK column.
@@ -291,7 +305,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		if !ok {
 			return nil, fmt.Errorf("role-walk parent %q must be a column relation", t.Ident)
 		}
-		return []string{fmt.Sprintf("%s.is_%s_admin(%s, %s)", s.definerSchema(), parent.Types[0], s.claim(s.adminIdentify()), col.Column)}, nil
+		return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
 	}
 	switch {
 	case t.Builtin == "app_scope":
@@ -353,9 +367,9 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		for _, lvl := range obj.Scoped {
 			cols = append(cols, scopeCol(obj, lvl))
 		}
-		// No rank → "has any role" (auth.admin_has_<obj>_role); a rank threshold
+		// No rank → "has any role" (auth.<admin>_has_<obj>_role); a rank threshold
 		// → the named rank predicate (auth.is_<rank>, e.g. is_project_admin).
-		fn := fmt.Sprintf("admin_has_%s_role", obj.Name)
+		fn := fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name)
 		if repr.HasRank {
 			fn = "is_" + repr.RankMin
 		}

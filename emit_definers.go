@@ -214,7 +214,7 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 			return GenFn{}, false, fmt.Errorf("walk references unknown relation %q", t.Ident)
 		}
 		lvl := parent.Types[0] // the level the walk targets (e.g. tenant)
-		fn := fmt.Sprintf("is_%s_admin", lvl)
+		fn := fmt.Sprintf("is_%s_%s", lvl, s.adminName())
 		keys := presetLevels[lvl] // all presets bound at that level
 		return s.roleDefiner(fn, rs, lvl, keys, s.operatorReach(lvl)), true, nil
 	}
@@ -241,8 +241,8 @@ func (s *Spec) roleDefinerForTerm(obj *Object, pm *Perm, t *Term, rels map[strin
 		recurse := s.parentLevelRecurse(obj)
 		return s.roleDefiner("is_"+vr.RankMin, rs, objLevel, keys, recurse), true, nil
 	}
-	// admin_has_<obj>_role: any role at the object's level, no recursion.
-	return s.roleDefiner(fmt.Sprintf("admin_has_%s_role", obj.Name), rs, objLevel, keys, ""), true, nil
+	// <admin>_has_<obj>_role: any role at the object's level, no recursion.
+	return s.roleDefiner(fmt.Sprintf("%s_has_%s_role", s.adminName(), obj.Name), rs, objLevel, keys, ""), true, nil
 }
 
 // roleDefiner builds a role-resolution EXISTS over the role store at the given
@@ -302,7 +302,7 @@ func (s *Spec) parentLevelRecurse(obj *Object) string {
 		return s.operatorReach(obj.Scoped[len(obj.Scoped)-1])
 	}
 	parent := obj.Scoped[len(obj.Scoped)-2]
-	return fmt.Sprintf("is_%s_admin(user_id, check_%s_id)", parent, parent)
+	return fmt.Sprintf("is_%s_%s(user_id, check_%s_id)", parent, s.adminName(), parent)
 }
 
 // operatorReach returns the recursion predicate the privileged ("operator")

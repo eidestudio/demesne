@@ -102,8 +102,10 @@ func TestExample_EmitRLS(t *testing.T) {
 	}
 	for _, frag := range []string{
 		"auth.is_root(" + cSub + ")",
-		"auth.is_tenant_admin(" + cSub + ", tenant_id)",
-		"auth.admin_has_workspace_role(" + cSub + ", tenant_id, id)",
+		// The admin plane subject is named `staff`, so the role-definer affixes are
+		// is_<level>_staff / staff_has_<obj>_role — not a baked "admin" (EID-265 WS2).
+		"auth.is_tenant_staff(" + cSub + ", tenant_id)",
+		"auth.staff_has_workspace_role(" + cSub + ", tenant_id, id)",
 	} {
 		if !strings.Contains(ws.Using, frag) {
 			t.Errorf("workspaces_select missing %q in:\n%s", frag, ws.Using)
@@ -147,7 +149,7 @@ func TestExample_EmitDefiners(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"is_root", "is_tenant_admin", "admin_has_workspace_role",
+		"is_root", "is_tenant_staff", "staff_has_workspace_role",
 		// The doc's owner principal is `member`, so the realtime gate is named for
 		// it — NOT an assumed `customer` (EID-265 WS2 principal-kinds generalization).
 		"is_ws_editor", "member_can_access_doc", "doc_acl_grants",
