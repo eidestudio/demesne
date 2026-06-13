@@ -380,6 +380,37 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	return frags, nil
 }
 
+// PolicySQL renders the idempotent DROP + CREATE statement for every emitted
+// policy, all granted to `role`, sorted by (table, name) for deterministic
+// output. This is the Phase-B source-of-truth SQL: a goose migration re-creates
+// the live policies from this, and because every USING/WITH CHECK is the same
+// expression the oracle verified against pg_policies, the re-creation is a no-op
+// on a live database. The emitter never emits a policy for an Unsupported
+// permission, so callers should treat a non-empty RLSResult.Unsupported as fatal
+// before rendering (Validate's V11 already does).
+func (r *RLSResult) PolicySQL(role string) string {
+	pols := append([]Policy(nil), r.Policies...)
+	sort.Slice(pols, func(i, j int) bool {
+		if pols[i].Table != pols[j].Table {
+			return pols[i].Table < pols[j].Table
+		}
+		return pols[i].Name < pols[j].Name
+	})
+	var b strings.Builder
+	for _, p := range pols {
+		fmt.Fprintf(&b, "DROP POLICY IF EXISTS %s ON public.%s;\n", p.Name, p.Table)
+		fmt.Fprintf(&b, "CREATE POLICY %s ON public.%s FOR %s TO %s", p.Name, p.Table, p.Cmd, role)
+		if p.Using != "" {
+			fmt.Fprintf(&b, "\n    USING (%s)", p.Using)
+		}
+		if p.Check != "" {
+			fmt.Fprintf(&b, "\n    WITH CHECK (%s)", p.Check)
+		}
+		b.WriteString(";\n\n")
+	}
+	return b.String()
+}
+
 // DefinerNames returns the sorted set of SECURITY DEFINER functions the emitted
 // policies reference — the surface the compiler must own (V9) and the kernel
 // emitter generates.

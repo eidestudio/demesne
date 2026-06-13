@@ -202,6 +202,57 @@ func TestExample_ClaimsContract(t *testing.T) {
 	}
 }
 
+// TestExample_PolicySQL — the idempotent DROP+CREATE render is deterministic,
+// grants the given role, and uses the emitted USING/WITH CHECK verbatim.
+func TestExample_PolicySQL(t *testing.T) {
+	s := loadExample(t)
+	res, err := s.EmitRLS()
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	sql := res.PolicySQL("authenticated")
+	if sql != res.PolicySQL("authenticated") {
+		t.Fatal("PolicySQL is not deterministic")
+	}
+	for _, frag := range []string{
+		"DROP POLICY IF EXISTS docs_select ON public.docs;",
+		"CREATE POLICY docs_select ON public.docs FOR SELECT TO authenticated",
+		"USING (",
+		"DROP POLICY IF EXISTS docs_insert ON public.docs;",
+		"CREATE POLICY docs_insert ON public.docs FOR INSERT TO authenticated",
+		"WITH CHECK (",
+	} {
+		if !strings.Contains(sql, frag) {
+			t.Errorf("PolicySQL missing %q in:\n%s", frag, sql)
+		}
+	}
+	// A SELECT policy carries USING, never WITH CHECK.
+	sel := sql[strings.Index(sql, "CREATE POLICY docs_select"):]
+	sel = sel[:strings.Index(sel, ";")]
+	if strings.Contains(sel, "WITH CHECK") {
+		t.Errorf("SELECT policy must not have WITH CHECK:\n%s", sel)
+	}
+}
+
+// TestExample_DefinersSQL — every generated definer renders as a CREATE OR
+// REPLACE FUNCTION, in dependency order.
+func TestExample_DefinersSQL(t *testing.T) {
+	s := loadExample(t)
+	defs, err := s.EmitDefiners()
+	if err != nil {
+		t.Fatalf("emit definers: %v", err)
+	}
+	sql := DefinersSQL(defs)
+	if got := strings.Count(sql, "CREATE OR REPLACE FUNCTION auth."); got != len(defs) {
+		t.Errorf("want %d CREATE OR REPLACE, got %d", len(defs), got)
+	}
+	for _, d := range defs {
+		if !strings.Contains(sql, "CREATE OR REPLACE FUNCTION auth."+d.Name+"(") {
+			t.Errorf("DefinersSQL missing %q", d.Name)
+		}
+	}
+}
+
 func keys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
