@@ -68,12 +68,12 @@ assumptions have been lifted into spec-declared parameters (EID-265 WS2): the
 claims accessor (`claims via`), the definer schema (`definers schema`), the
 descriptor mode vocabulary (`private` / `read "<sentinel>"` / `list "<kind>"`),
 the owner principal kind (the grant + realtime-gate signatures name the spec's
-own owner principal), and the owner/admin plane bindings (`binds owner|admin`,
-explicit rather than shape-inferred). What honestly remains:
+own owner principal), the owner/admin plane bindings (`binds owner|admin`,
+explicit rather than shape-inferred), and the role-definer affixes (derived from
+the admin plane's name — `is_<level>_<admin>` / `<admin>_has_<obj>_role` — so a
+spec whose admin plane is named `staff` gets `is_tenant_staff`, not a baked
+`admin`). What honestly remains:
 
-- **Function-name affixes.** The generated definer names still derive from a
-  fixed affix vocabulary (`is_<level>_admin`, `admin_has_<obj>_role`); the
-  principal and schema are spec-declared, but the role-name affixes are not.
 - **Second claim-bearing owner principal.** A descriptor's owner resolves a
   single claim-bearing principal (plus the no-claim app/service plane); a record
   owned by two *distinct* claim-bearing principals isn't modelled (no spec needs
