@@ -70,9 +70,6 @@ its first deployment; they're called out honestly rather than hidden:
   assume a customer-style owner principal (the grant store filter and the
   generated signatures name a customer principal). A second principal kind for
   record ownership would need generalizing here.
-- **Descriptor mode vocabulary.** Public-mode scopes (`project` / `world`) and
-  the list mode (`customers` / `admins`) are a fixed vocabulary in the
-  validator rather than spec-declared.
 - **Subject-role inference.** The owner subject (`reach self` + roles at the
   leaf) and the admin subject (`reach descendants` + roles) are inferred from
   subject shape, not an explicit role-binding keyword. Validation now fails
