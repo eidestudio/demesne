@@ -42,13 +42,24 @@ complete). The platform no longer hand-authors policies or the PDP map:
   `pg_get_functiondef`, the cutover was a proven byte-for-byte **no-op** (fresh
   DB with the generated migration == the prior hand-written set).
 
-The oracle still runs, but with generation as the source of truth its
-generated-vs-live comparison is now (correctly) trivial — so the **V7 SQL
-isolation property test** is the real semantic gate: it seeds sibling nodes and
-runs queries under the emitted policies to prove cross-tenant/owner isolation
-actually holds. Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY` and
-`GRANT`s remain hand-written migrations; Demesne owns only the idempotent
-policy + definer + PDP + claims layer.
+The oracle still runs, but with generation as the source of truth (EID-265 WS1)
+its generated-vs-live comparison is now (correctly) a **convergence / no-drift**
+check, not a fidelity-to-hand-written gate. The real semantic gate is **forward
+isolation** — proving the emitted policies actually isolate — in two halves:
+
+- the engine's **template-level** V7 property test (this module, `isolation_test.go`):
+  the §6.2 scope-column model fails closed between siblings and grants
+  unconditional reach only to a virtual-anchored subject — independent of the
+  emitted SQL, no database;
+- the platform's **SQL-level** forward-isolation gate (where the DB is,
+  `demesne_isolation_test.go`): it seeds sibling tenants + customers + records of
+  every access mode and drives real principals against the LIVE generated
+  policies, asserting tenant / project / owner / operator-grant (incl. expired) /
+  public-mode / app-scope / write isolation all hold.
+
+Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY` and `GRANT`s remain
+hand-written migrations; Demesne owns only the idempotent policy + definer + PDP
++ claims layer.
 
 ## Known limitations
 
