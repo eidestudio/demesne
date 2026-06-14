@@ -22,6 +22,10 @@ func Parse(src string) (*Spec, error) {
 type parser struct {
 	toks []token
 	i    int
+	// virtualRoot is the name of the topology's virtual root level, captured when
+	// the topology block is parsed so the `platform <table>` shorthand can anchor a
+	// global object there without restating it. "" until the topology is seen.
+	virtualRoot string
 }
 
 func (p *parser) cur() token  { return p.toks[p.i] }
@@ -89,6 +93,11 @@ func (p *parser) parseSpec() (*Spec, error) {
 				return nil, p.errf("duplicate topology block")
 			}
 			s.Topology = t
+			for _, l := range t.Levels {
+				if l.isRoot() && l.Virtual {
+					p.virtualRoot = l.Name
+				}
+			}
 		case "vocabulary":
 			v, err := p.parseVocabulary()
 			if err != nil {
@@ -109,6 +118,12 @@ func (p *parser) parseSpec() (*Spec, error) {
 			s.Objects = append(s.Objects, o)
 		case "settings":
 			o, err := p.parseSettings()
+			if err != nil {
+				return nil, err
+			}
+			s.Objects = append(s.Objects, o)
+		case "platform":
+			o, err := p.parsePlatform()
 			if err != nil {
 				return nil, err
 			}
@@ -542,6 +557,40 @@ func (p *parser) parseSettings() (*Object, error) {
 	return o, nil
 }
 
+// parsePlatform is the compact GLOBAL-object form (v3 WS6): `platform <table>`
+// expands to an object scoped at the virtual root level — a table ABOVE tenancy,
+// with no containment columns, governed entirely by the platform-role subject
+// branch. It is the platform-plane analogue of `settings <table> scoped …`: the
+// same four @scoped (plane-only) permissions, but the "plane" is the platform
+// role rather than a tenant/project containment chain. The general retirement of
+// is_platform_admin lives here — these objects' staff-access definer is generated
+// (is_platform_<role>), not hand-written.
+func (p *parser) parsePlatform() (*Object, error) {
+	o := &Object{Pos: Pos{p.cur().line}}
+	p.advance() // 'platform'
+	tbl, err := p.ident()
+	if err != nil {
+		return nil, err
+	}
+	o.Name = tbl
+	o.Table = tbl
+	if p.virtualRoot == "" {
+		return nil, p.errf("`platform %s` needs a virtual root level in the topology (e.g. `level platform virtual`) to anchor a global object", tbl)
+	}
+	o.Scoped = []string{p.virtualRoot}
+	line := o.Pos
+	scoped := func(verb, op string) *Perm {
+		return &Perm{Verb: verb, Expr: []*Term{{Builtin: "scoped", Pos: line}}, Layers: []string{"rls"}, Maps: op, Pos: line}
+	}
+	o.Perms = []*Perm{
+		scoped("view", "select"),
+		scoped("create", "insert"),
+		scoped("edit", "update"),
+		scoped("delete", "delete"),
+	}
+	return o, nil
+}
+
 func (p *parser) parseLevelChain() ([]string, error) {
 	first, err := p.ident()
 	if err != nil {
@@ -770,6 +819,30 @@ func (p *parser) parseRepr() (Repr, error) {
 			return nil, err
 		}
 		return ViaObject{Object: other, Verb: verb, Col: col}, nil
+	case p.acceptKw("memberin"):
+		// memberin <level>(<principal-src>, <scope-src>) ; src = @<claim> | <col>
+		level, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tLParen); err != nil {
+			return nil, err
+		}
+		principal, err := p.parseArgSrc()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tComma); err != nil {
+			return nil, err
+		}
+		scope, err := p.parseArgSrc()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tRParen); err != nil {
+			return nil, err
+		}
+		return ViaMemberIn{Level: level, Principal: principal, Scope: scope}, nil
 	default:
 		// via <fk column>
 		col, err := p.ident()
@@ -778,6 +851,24 @@ func (p *parser) parseRepr() (Repr, error) {
 		}
 		return ViaColumn{Column: col}, nil
 	}
+}
+
+// parseArgSrc parses a ViaMemberIn argument: `@<claim>` (a claim key) or `<col>`
+// (a column on the object's own row).
+func (p *parser) parseArgSrc() (ArgSrc, error) {
+	if p.peekKind() == tAt {
+		p.advance()
+		k, err := p.ident()
+		if err != nil {
+			return ArgSrc{}, err
+		}
+		return ArgSrc{Claim: k}, nil
+	}
+	c, err := p.ident()
+	if err != nil {
+		return ArgSrc{}, err
+	}
+	return ArgSrc{Col: c}, nil
 }
 
 func (p *parser) parseDescriptor() (*Descriptor, error) {

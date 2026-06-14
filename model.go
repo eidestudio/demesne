@@ -48,6 +48,25 @@ func (r *Relation) CostClass() CostClass {
 	}
 }
 
+// subjectByName returns the named subject, or nil.
+func (s *Spec) subjectByName(name string) *Subject {
+	for _, sub := range s.Subjects {
+		if sub.Name == name {
+			return sub
+		}
+	}
+	return nil
+}
+
+// levelIsVirtual reports whether the named topology level is virtual (no scope
+// column / claim key). Unknown levels are treated as non-virtual.
+func (s *Spec) levelIsVirtual(name string) bool {
+	if l := s.Topology.LevelByName(name); l != nil {
+		return l.Virtual
+	}
+	return false
+}
+
 // objectByName returns the named object, or nil.
 func (s *Spec) objectByName(name string) *Object {
 	for _, o := range s.Objects {

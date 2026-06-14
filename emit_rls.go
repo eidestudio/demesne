@@ -205,6 +205,8 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	}
 	objLeaf := obj.Scoped[len(obj.Scoped)-1]
 
+	objIsGlobal := virtual[objLeaf] // a virtual-leaf object lives above tenancy
+	objHasStaffTerm := s.objectReferencesStaff(obj)
 	var top []string
 	for _, sub := range s.Subjects {
 		switch {
@@ -212,17 +214,29 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			// Legacy unconditional membership operator (a god-flag): reaches every
 			// row, gated only by `<leaf>_id IS NULL` (no scope selected).
 			fn := fmt.Sprintf("%s.%s(%s)", s.definerSchema(), membershipFn(sub.Membership), s.claim(sub.Identifies))
-			if obj.IsLevelEntity() {
+			if obj.IsLevelEntity() || objIsGlobal {
 				top = append(top, fn)
 			} else {
 				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(objLeaf+"_id")))
 			}
+		case s.isPlatformRoleSubject(sub) && objIsGlobal && sub.Anchor == objLeaf && !objHasStaffTerm:
+			// Platform-anchored ROLE subject on a PURE-GLOBAL object (the `platform
+			// <table>` shorthand, v3 WS6): a table above tenancy whose ONLY grant is
+			// the platform plane. The platform-role definer is the whole top branch —
+			// has_<anchor>_role(<claim>) over role_assignments with NULL scope. The
+			// general retirement of the is_platform_admin god-flag. Skipped when the
+			// object references the staff plane EXPLICITLY (a composable `staff` term,
+			// for objects that mix staff with self/role/session) — that term emits the
+			// same call, so auto-adding here too would duplicate it.
+			top = append(top, fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(sub.Anchor), s.claim(sub.Identifies)))
 		case sub.Reach == "grant":
 			// Scoped grant operator (the general replacement for the god-flag):
 			// reach is gated by an ACTIVE grant edge at the grant's level — not
 			// unconditional — and cascades to the whole subtree via the object's
-			// level-scope column. No `<leaf>_id IS NULL` ambient view.
-			if g := s.grantByName(sub.ReachGrant); g != nil {
+			// level-scope column. No `<leaf>_id IS NULL` ambient view. A grant
+			// reaches DOWN into its level's subtree, so it contributes nothing to a
+			// GLOBAL object above that level (which carries no such scope column).
+			if g := s.grantByName(sub.ReachGrant); g != nil && contains(obj.Scoped, g.Level) {
 				top = append(top, fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level)))
 			}
 		}
@@ -285,7 +299,17 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 	if len(top) == 0 && len(blockTerms) == 0 && !scopedGrant {
 		return "", fmt.Errorf("no emittable grant terms")
 	}
-	branches := append(top, "("+block+")")
+	// A GLOBAL object (virtual leaf) carries no containment columns, so its block is
+	// empty; its only grant is the platform-role top branch. Emit just that branch —
+	// never a bare `OR ()`, which is a syntax error. Every non-global object always
+	// has a non-empty containment block, so this is byte-identical for them.
+	branches := top
+	if block != "" {
+		branches = append(branches, "("+block+")")
+	}
+	if len(branches) == 0 {
+		return "", fmt.Errorf("object %q permission %q: no emittable grant — a global object needs a platform-role subject", obj.Name, pm.Verb)
+	}
 	return strings.Join(branches, " OR "), nil
 }
 
@@ -302,10 +326,53 @@ func (s *Spec) objectVerbPredicate(obj *Object, verb string, virtual map[string]
 	return "", fmt.Errorf("object %q has no @rls permission %q for a cross-object reference", obj.Name, verb)
 }
 
+// argSrcSQL renders a ViaMemberIn argument: a claim accessor for `@<key>`, or the
+// bare row column for a column source.
+func (s *Spec) argSrcSQL(a ArgSrc) string {
+	if a.Claim != "" {
+		return s.claim(a.Claim)
+	}
+	return a.Col
+}
+
+// relationClaim returns the claim key an inline relation matches its column
+// against: the relation's first declared type subject's `identifies`, or the
+// supplied fallback (the object's leaf owner-plane claim) when the type names no
+// claim-bearing subject. This is what lets an owner axis resolve on a global
+// object, where there is no leaf owner subject to fall back to.
+func (s *Spec) relationClaim(r *Relation, fallback string) string {
+	if r != nil && len(r.Types) > 0 {
+		if sub := s.subjectByName(r.Types[0]); sub != nil && sub.Identifies != "" {
+			return sub.Identifies
+		}
+	}
+	return fallback
+}
+
+// objectReferencesStaff reports whether the object declares a relation targeting
+// a virtual-anchored role subject — the COMPOSABLE platform-staff plane. When it
+// does, rlsPredicate does NOT also auto-add the staff top branch (that would
+// duplicate the term's emitted call). Pure-global objects (the `platform <table>`
+// shorthand) have no such relation, so they get the auto-branch.
+func (s *Spec) objectReferencesStaff(obj *Object) bool {
+	for _, r := range obj.Relations {
+		if _, ok := r.Repr.(ViaRole); !ok {
+			continue
+		}
+		if len(r.Types) > 0 {
+			if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // guardable reports whether the bounded guard rides this term — a node-level
-// grant (a same-level via-role or @session), never an ancestor walk or the
-// operator.
-func guardable(t *Term, rels map[string]*Relation) bool {
+// grant (a same-level via-role or @session), never an ancestor walk, the
+// operator, or the platform-staff plane (staff sees guarded rows like CHURNED
+// tenants, exactly as the impersonation operator does).
+func (s *Spec) guardable(t *Term, rels map[string]*Relation) bool {
 	if t.Builtin == "session" {
 		return true
 	}
@@ -313,7 +380,19 @@ func guardable(t *Term, rels map[string]*Relation) bool {
 		return false
 	}
 	if r := rels[t.Ident]; r != nil {
-		if _, ok := r.Repr.(ViaRole); ok {
+		switch r.Repr.(type) {
+		case ViaRole:
+			// The platform-staff plane (a via-role targeting a virtual-anchored role
+			// subject) is the operator plane, not a node-level grant — not guardable.
+			if len(r.Types) > 0 {
+				if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+					return false
+				}
+			}
+			return true
+		case ViaMemberIn:
+			// A scoped role-membership grant (the tenant picker) — the CHURNED guard
+			// rides it, exactly as the live tenants policy AND's it with status.
 			return true
 		}
 	}
@@ -343,7 +422,7 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 		}
 		var out []string
 		for _, f := range frags {
-			if pm.Guard != nil && guardable(n.Term, rels) {
+			if pm.Guard != nil && s.guardable(n.Term, rels) {
 				f = fmt.Sprintf("(%s AND %s)", f, guardSQL(pm.Guard))
 			}
 			out = append(out, f)
@@ -412,6 +491,13 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		return []string{fmt.Sprintf("%s.is_%s_%s(%s, %s)", s.definerSchema(), parent.Types[0], s.adminName(), s.claim(s.adminIdentify()), col.Column)}, nil
 	}
 	switch {
+	case t.Builtin == "open":
+		// @open (v3 WS6): an op deliberately unrestricted at the RLS layer (`true`).
+		// The sanctioned use is a bootstrap INSERT the row engine cannot gate — a
+		// login session / credential row written before any session claim exists
+		// (the trusted auth code sets the owner column). Validation confines @open to
+		// @rls insert; it is never a read/update/delete grant.
+		return []string{"true"}, nil
 	case t.Builtin == "app_scope":
 		if err := reqClaim(custClaim, obj, "@app_scope"); err != nil {
 			return nil, err
@@ -447,11 +533,18 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 	pk := obj.Table + ".id"
 	switch repr := r.Repr.(type) {
 	case ViaColumn:
-		// Inline owner axis: column equals the customer claim.
-		if err := reqClaim(custClaim, obj, "owner relation "+t.Ident); err != nil {
+		// Inline owner axis: the FK column equals the owner's claim. The claim key
+		// comes from the relation's DECLARED TYPE subject (e.g. `owner: admin via
+		// admin_user_id` → the admin's `sub`), falling back to the object's owner
+		// plane. Resolving from the relation's type — not only the leaf owner subject
+		// — lets a GLOBAL object (above tenancy, no owner plane at its virtual leaf)
+		// still carry an owner axis (admin_user_id = sub). Byte-identical for Foir,
+		// whose owner relations' first type IS the leaf owner subject.
+		claimKey := s.relationClaim(r, custClaim)
+		if err := reqClaim(claimKey, obj, "owner relation "+t.Ident); err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("%s = %s", repr.Column, s.claim(custClaim))}, nil
+		return []string{fmt.Sprintf("%s = %s", repr.Column, s.claim(claimKey))}, nil
 	case ViaEdge:
 		// Definer tail: the compiler owns auth.<edgeTable>(...).
 		if err := reqClaim(custClaim, obj, "edge relation "+t.Ident); err != nil {
@@ -481,6 +574,13 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.claim(custClaim))}, nil
+	case ViaMemberIn:
+		// Scoped role-membership (v3 WS6): admin_memberin_<level>(principal, scope) —
+		// the principal holds an admin role at the scope level. Each arg is a claim
+		// (@<key>) or a row column. Guard-ridden (see guardable): the tenant picker's
+		// membership branch carries the CHURNED guard, like the live policy.
+		name := fmt.Sprintf("%s_memberin_%s", s.adminName(), repr.Level)
+		return []string{fmt.Sprintf("%s.%s(%s, %s)", s.definerSchema(), name, s.argSrcSQL(repr.Principal), s.argSrcSQL(repr.Scope))}, nil
 	case ViaObject:
 		// Cross-object permission reference (v3 WS3 — tuple_to_userset): the caller
 		// passes the other object's <verb> for the related row named by repr.Col. The
@@ -488,6 +588,17 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// GUC inside it), so no claim is threaded through the call here.
 		return []string{fmt.Sprintf("%s.%s_can_%s(%s)", s.definerSchema(), repr.Object, repr.Verb, repr.Col)}, nil
 	case ViaRole:
+		// Platform-staff plane (v3 WS6): a `via role` relation whose TYPE is the
+		// virtual-anchored role subject resolves to the root-plane role definer,
+		// has_<anchor>_role(<claim>) — no scope columns (a platform role pins none).
+		// This is the COMPOSABLE form of the staff plane: a mixed object (tenants,
+		// admin_users) lists `staff` alongside self/role/session, and it OR-composes
+		// like any other term. It is NOT guard-ridden (see guardable): staff is the
+		// operator plane, so it sees a CHURNED tenant just like the impersonation
+		// operator does.
+		if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
+			return []string{fmt.Sprintf("%s.%s(%s)", s.definerSchema(), platformRoleFn(st.Anchor), s.claim(st.Identifies))}, nil
+		}
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(
 		// <admin sub claim>, <scope cols>). A rank threshold narrows the fn.
