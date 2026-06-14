@@ -64,13 +64,42 @@ func TestBoolean_IntersectionExclusionPrecedence(t *testing.T) {
 	if !strings.Contains(by["docs_select"], "(owner_id = "+c+") AND (shared_with = "+c+")") {
 		t.Errorf("intersection not emitted:\n%s", by["docs_select"])
 	}
-	// (2) exclusion → fail-closed NOT COALESCE (an indeterminate banned denies).
-	if !strings.Contains(by["docs_update"], "(owner_id = "+c+") AND (NOT COALESCE(banned_id = "+c+", true))") {
-		t.Errorf("exclusion not emitted fail-closed:\n%s", by["docs_update"])
+	// (2) exclusion → `(P) IS NOT TRUE` (a no-ban / NULL is not excluded; banned is).
+	if !strings.Contains(by["docs_update"], "(owner_id = "+c+") AND ((banned_id = "+c+") IS NOT TRUE)") {
+		t.Errorf("exclusion not emitted correctly:\n%s", by["docs_update"])
 	}
 	// (3) precedence: the parenthesised union binds before the exclusion.
-	if !strings.Contains(by["docs_delete"], "(owner_id = "+c+" OR shared_with = "+c+") AND (NOT COALESCE(banned_id = "+c+", true))") {
+	if !strings.Contains(by["docs_delete"], "(owner_id = "+c+" OR shared_with = "+c+") AND ((banned_id = "+c+") IS NOT TRUE)") {
 		t.Errorf("precedence/grouping wrong:\n%s", by["docs_delete"])
+	}
+}
+
+// A permission must be positively gated: a bare `not`, or a `not` as a union
+// branch, is fail-open and rejected.
+func TestBoolean_PolarityFailsClosed(t *testing.T) {
+	head := `topology { level a }
+		vocabulary v { permission self:read }
+		subject s { anchor a reach self identifies sub roles configurable v binds owner }
+		object o { table t scoped a relation x: s via xc relation y: s via yc `
+	for _, bad := range []string{
+		"permission view = not x @rls maps select }",       // bare negation
+		"permission view = x or not y @rls maps select }",  // negated union branch
+	} {
+		spec, err := Parse(head + bad)
+		if err != nil {
+			t.Fatalf("parse %q: %v", bad, err)
+		}
+		if err := Validate(spec); err == nil || !strings.Contains(err.Error(), "positively gated") {
+			t.Errorf("%q should be rejected as not positively gated, got: %v", bad, err)
+		}
+	}
+	// `x and not y` IS positively gated → accepted.
+	ok, err := Parse(head + "permission view = x and not y @rls maps select }")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(ok); err != nil {
+		t.Errorf("`x and not y` should be accepted: %v", err)
 	}
 }
 

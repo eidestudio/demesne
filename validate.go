@@ -396,8 +396,48 @@ func validateDescriptor(o *Object) error {
 	return errors.Join(errs...)
 }
 
+// permPositive reports whether a permission node grants access on its own — every
+// branch reaches a positive (non-negated) term. A leaf is positive; a `not` is
+// negative; an `and` is positive if ANY child is (a positive gates the negations);
+// an `or` is positive only if EVERY branch is (a negated union branch is fail-open).
+func permPositive(n *PermNode) bool {
+	if n == nil {
+		return false
+	}
+	switch n.Op {
+	case "leaf":
+		return true
+	case "not":
+		return false
+	case "and":
+		for _, k := range n.Kids {
+			if permPositive(k) {
+				return true
+			}
+		}
+		return false
+	case "or":
+		for _, k := range n.Kids {
+			if !permPositive(k) {
+				return false
+			}
+		}
+		return len(n.Kids) > 0
+	}
+	return false
+}
+
 func validatePerm(o *Object, pm *Perm, rels map[string]*Relation) error {
 	var errs []error
+
+	// Polarity (v3 WS1): a permission must be POSITIVELY GATED — every path to a
+	// grant ends in a real (non-negated) term. A bare `not`, or a `not` as a union
+	// branch (`a or not b`), is fail-OPEN (a NULL claim satisfies the negation and
+	// grants access); a `not` is only sound when AND'd with a positive grant that
+	// gates it. This makes exclusion fail-closed by construction.
+	if pm.Tree != nil && !permPositive(pm.Tree) {
+		errs = append(errs, fmt.Errorf("line %d: permission %s.%s is not positively gated — a `not` (exclusion) must be combined with `and` with a positive grant, never used alone or as a union (`+`/`or`) branch", pm.Pos.Line, o.Name, pm.Verb))
+	}
 
 	// Layer values must be known.
 	hasRLS, hasKernel, hasPDP := false, false, false

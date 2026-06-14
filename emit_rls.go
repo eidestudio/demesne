@@ -370,7 +370,13 @@ func (s *Spec) nodeFrags(obj *Object, pm *Perm, n *PermNode, rels map[string]*Re
 		if len(kf) == 0 {
 			return nil, nil
 		}
-		return []string{fmt.Sprintf("NOT COALESCE(%s, true)", strings.Join(kf, " OR "))}, nil
+		// Exclusion: the row passes iff the excluded condition is NOT definitely
+		// true — `(P) IS NOT TRUE` (false or NULL → not excluded). A NULL means the
+		// condition doesn't apply (e.g. an empty ban column), NOT "deny": that
+		// would wrongly exclude every row with no ban. Fail-closed is enforced
+		// STRUCTURALLY instead (validatePermPolarity): a `not` may only appear AND'd
+		// with a positive grant, so a NULL claim can never satisfy a bare negation.
+		return []string{fmt.Sprintf("(%s) IS NOT TRUE", strings.Join(kf, " OR "))}, nil
 	}
 	return nil, fmt.Errorf("unknown permission node op %q", n.Op)
 }
