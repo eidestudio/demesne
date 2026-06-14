@@ -379,6 +379,15 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		return []string{fmt.Sprintf("%s.%s_composition_%s(%s, %s, '%s')", s.definerSchema(), obj.Name, r.Name, s.claim(custClaim), pk, access)}, nil
+	case ViaClosure:
+		// Unbounded-depth reachability (WS3 Phase C): the row's hierarchy node
+		// (repr.Col) is reachable from the subject's granted ancestor (its claim)
+		// iff a closure pair exists. An indexed read over the trigger-maintained
+		// closure — the compiler owns both the lookup definer and the maintenance.
+		if err := reqClaim(custClaim, obj, "closure relation "+t.Ident); err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.claim(custClaim), repr.Col)}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(

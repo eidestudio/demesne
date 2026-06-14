@@ -603,6 +603,35 @@ func (p *parser) parseRelation() (*Relation, error) {
 	return r, nil
 }
 
+// parseTableCols parses `<table>(<col>, <col>, ...)` and returns the table name
+// and its column list.
+func (p *parser) parseTableCols() (string, []string, error) {
+	tbl, err := p.ident()
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := p.expect(tLParen); err != nil {
+		return "", nil, err
+	}
+	var cols []string
+	for {
+		c, err := p.ident()
+		if err != nil {
+			return "", nil, err
+		}
+		cols = append(cols, c)
+		if p.peekKind() == tComma {
+			p.advance()
+			continue
+		}
+		break
+	}
+	if _, err := p.expect(tRParen); err != nil {
+		return "", nil, err
+	}
+	return tbl, cols, nil
+}
+
 func (p *parser) parseRepr() (Repr, error) {
 	switch {
 	case p.acceptKw("edge"):
@@ -660,6 +689,36 @@ func (p *parser) parseRepr() (Repr, error) {
 			return nil, err
 		}
 		return ViaComposition{Table: tbl}, nil
+	case p.acceptKw("closure"):
+		// closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>
+		clo, cloCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(cloCols) != 2 {
+			return nil, p.errf("via closure needs a closure table with 2 columns (ancestor, descendant), got %d", len(cloCols))
+		}
+		if err := p.expectKw("base"); err != nil {
+			return nil, err
+		}
+		base, baseCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(baseCols) != 2 {
+			return nil, p.errf("via closure base needs 2 columns (id, parent), got %d", len(baseCols))
+		}
+		if err := p.expectKw("on"); err != nil {
+			return nil, err
+		}
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		return ViaClosure{
+			Closure: clo, AncestorCol: cloCols[0], DescendantCol: cloCols[1],
+			Base: base, BaseID: baseCols[0], BaseParent: baseCols[1], Col: col,
+		}, nil
 	default:
 		// via <fk column>
 		col, err := p.ident()

@@ -292,10 +292,31 @@ type ViaRole struct {
 // ViaComposition: `via composition <Table>` — 1-hop composition-parent cascade.
 type ViaComposition struct{ Table string }
 
+// ViaClosure: `via closure <Closure>(<anc>,<desc>) base <Base>(<id>,<parent>) on <col>`
+// — UNBOUNDED-depth reachability over a self-referential hierarchy (WS3 Phase C).
+// The base table is the hierarchy (each row's <parent> points at another row's
+// <id>); the closure table materialises its transitive-reflexive closure as
+// (ancestor, descendant) pairs. The compiler GENERATES the closure-maintenance
+// trigger (on the base table) and an indexed reachability lookup definer; the RLS
+// term tests `reachable(<subject claim>, <Col>)` — the row's hierarchy column
+// <Col> is reachable from the subject's granted node. This is the RLS-native
+// analogue of Zanzibar's Leopard index; its write-amplification is an EXPLICIT,
+// opt-in spec decision (cost class Closure), never silently emitted.
+type ViaClosure struct {
+	Closure       string // closure table (ancestor, descendant) pairs
+	AncestorCol   string
+	DescendantCol string
+	Base          string // the self-referential hierarchy table
+	BaseID        string // base PK column
+	BaseParent    string // base self-FK (points at BaseID); NULL at a root
+	Col           string // the object row's column holding its node id (the descendant)
+}
+
 func (ViaColumn) isRepr()      {}
 func (ViaEdge) isRepr()        {}
 func (ViaRole) isRepr()        {}
 func (ViaComposition) isRepr() {}
+func (ViaClosure) isRepr()     {}
 
 // Perm is an object permission: a verb, a union expression, the layer tag(s),
 // and (optionally) the table-op / pdp-verb it maps to and a row guard.

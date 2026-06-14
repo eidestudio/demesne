@@ -74,12 +74,21 @@ the admin plane's name — `is_<level>_<admin>` / `<admin>_has_<obj>_role` — s
 spec whose admin plane is named `staff` gets `is_tenant_staff`, not a baked
 `admin`). What honestly remains:
 
+The topology is no longer linear (EID-265 WS3): levels form a **DAG** — a
+branching tree (multiple children) and multi-parent levels (`parents A, B`, whose
+object containment is a sargable OR of per-lineage predicates) — and
+unbounded-depth hierarchies are expressible with `via closure`, where the
+compiler generates a trigger-maintained transitive-closure table + an indexed
+reachability lookup (the RLS-native Leopard index; its write-amplification is an
+explicit, opt-in cost class). What honestly remains:
+
 - **Second claim-bearing owner principal.** A descriptor's owner resolves a
   single claim-bearing principal (plus the no-claim app/service plane); a record
   owned by two *distinct* claim-bearing principals isn't modelled (no spec needs
   it — deliberately not built).
-- **Linear topology.** The level chain is strictly linear (root → … → leaf);
-  cost-classed reachability DAGs are WS3.
+- **Multi-parent subjects/roles.** Multi-parent is confined to object
+  containment; a subject or role at a multi-parent level fails closed (its pinned
+  columns would be ambiguous) rather than picking a lineage.
 
 ## This module is pure
 

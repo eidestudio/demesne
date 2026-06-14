@@ -15,25 +15,35 @@ import (
 type CostClass int
 
 const (
-	Inline CostClass = iota
-	Definer
+	Inline  CostClass = iota // sargable column equality
+	Definer                  // a SECURITY DEFINER EXISTS over an edge/role store
+	Closure                  // an indexed lookup over a trigger-maintained transitive closure (write-amplified)
 )
 
 func (c CostClass) String() string {
-	if c == Definer {
+	switch c {
+	case Definer:
 		return "definer"
+	case Closure:
+		return "closure"
+	default:
+		return "inline"
 	}
-	return "inline"
 }
 
-// CostClass classifies a relation by how it must be joined: a foreign-key
-// column equality is inline+sargable; an edge/role/composition traversal is a
-// definer-function join (§7, V3).
+// CostClass classifies a relation by how it must be joined: a foreign-key column
+// equality is inline+sargable; a closure lookup is an indexed read over a
+// trigger-maintained transitive-closure table (write-amplified — WS3 Phase C);
+// everything else (edge / role / composition) is a definer-function join (§7, V3).
 func (r *Relation) CostClass() CostClass {
-	if _, ok := r.Repr.(ViaColumn); ok {
+	switch r.Repr.(type) {
+	case ViaColumn:
 		return Inline
+	case ViaClosure:
+		return Closure
+	default:
+		return Definer
 	}
-	return Definer
 }
 
 // grantByName returns the named level-scoped reachability grant, or nil.
