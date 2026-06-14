@@ -316,10 +316,33 @@ type ViaClosure struct {
 	Col           string // the object row's column holding its node id (the descendant)
 }
 
+// ViaGroup: `via group <Closure>(<group>,<member>) edge <Edge>(<member>,<group>) on <col>`
+// — NESTED GROUPS (Demesne v3 WS2): unbounded group-in-group membership over a
+// MANY-TO-MANY membership edge (a member may belong to many groups; a group may
+// belong to many groups — a DAG, unlike via-closure's single-parent tree). The
+// Edge is the direct-membership relation (`member ∈ group`); the Closure
+// materialises its transitive closure as (group, member) pairs. The compiler
+// GENERATES a statement-level closure-REBUILD trigger on the Edge (a recursive-CTE
+// recompute — correct for inserts, deletes, and re-grouping alike) and an indexed
+// membership-lookup definer; the RLS term tests `<Closure>_member(<Col>, <claim>)`
+// — the caller's claim is a transitive member of the group named by the row's
+// <Col>. The RLS-native analogue of a Zanzibar userset-of-usersets; its
+// write-amplification is the explicit, opt-in cost class Closure.
+type ViaGroup struct {
+	Closure    string // transitive-closure table: (group, member) pairs
+	GroupCol   string // closure group column
+	MemberCol  string // closure (transitive) member column
+	Edge       string // the M2M direct-membership edge table
+	EdgeMember string // edge member column ("member ∈ group")
+	EdgeGroup  string // edge group column
+	Col        string // the object row's column naming the granted group
+}
+
 func (ViaColumn) isRepr()      {}
 func (ViaEdge) isRepr()        {}
 func (ViaRole) isRepr()        {}
 func (ViaComposition) isRepr() {}
+func (ViaGroup) isRepr()       {}
 func (ViaClosure) isRepr()     {}
 
 // Perm is an object permission: a verb, a union expression, the layer tag(s),

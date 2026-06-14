@@ -128,6 +128,16 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 					reqCol(repr.Base, repr.BaseID, rc)
 					reqCol(repr.Base, repr.BaseParent, rc)
 				}
+			case ViaGroup:
+				reqCol(o.Table, repr.Col, rc)
+				if reqTable(repr.Closure, rc) {
+					reqCol(repr.Closure, repr.GroupCol, rc)
+					reqCol(repr.Closure, repr.MemberCol, rc)
+				}
+				if reqTable(repr.Edge, rc) {
+					reqCol(repr.Edge, repr.EdgeMember, rc)
+					reqCol(repr.Edge, repr.EdgeGroup, rc)
+				}
 			}
 		}
 		// Descriptor: owner axis, mode column, grant store.

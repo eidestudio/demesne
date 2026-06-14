@@ -154,7 +154,11 @@ Beyond this: **level-scoped grants** (`grant … at <level> via edge …` — a
 scoped, revocable operator/impersonation reach), **unbounded-depth hierarchies**
 (`relation … via closure <C>(anc,desc) base <B>(id,parent) on <col>` — the
 compiler generates a trigger-maintained transitive-closure table + an indexed
-reachability lookup, an explicit write-amplification cost), and a spec-declared
+reachability lookup, an explicit write-amplification cost), **nested groups**
+(`relation … via group <C>(group,member) edge <E>(member,group) on <col>` —
+group-in-group membership over a many-to-many edge, a userset-of-usersets; the
+compiler maintains the membership closure and the RLS term tests transitive
+membership), and a spec-declared
 **definer schema** (`definers schema "<name>"`). A level grant and a descriptor's
 ACL edge are the *same* reachability-grant concept at different granularities
 (level subtree vs one row) — unified declaratively, kept as separate physical

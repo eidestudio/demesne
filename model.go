@@ -39,6 +39,8 @@ func (r *Relation) CostClass() CostClass {
 	switch r.Repr.(type) {
 	case ViaColumn:
 		return Inline
+	case ViaGroup:
+		return Closure
 	case ViaClosure:
 		return Closure
 	default:
