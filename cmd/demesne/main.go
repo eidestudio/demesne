@@ -22,7 +22,7 @@ const usage = `demesne — RLS-compiled ReBAC authorization, point it at your da
 USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
-                                               kind: rls|definers|triggers|claims|pdp|all (default all)
+                                               kind: rls|definers|enablement|triggers|claims|pdp|all (default all)
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   <dsn>                     generate a STARTER spec from the schema
   demesne check    <spec.demesne> <dsn>        validate the spec, then bind it to the live schema
@@ -146,11 +146,21 @@ func cmdEmit(args []string) error {
 		fmt.Print(res.PolicySQL("authenticated"))
 		return nil
 	}
+	emitEnablement := func() error {
+		res, err := s.EmitRLS()
+		if err != nil {
+			return err
+		}
+		fmt.Print(res.EnablementSQL())
+		return nil
+	}
 	switch kind {
 	case "definers":
 		return emitDefiners()
 	case "rls", "policies":
 		return emitRLS()
+	case "enablement":
+		return emitEnablement()
 	case "triggers":
 		fmt.Print(s.TriggersSQL())
 		return nil
@@ -189,6 +199,10 @@ func cmdEmit(args []string) error {
 			return err
 		}
 		fmt.Print("\n")
+		if err := emitEnablement(); err != nil {
+			return err
+		}
+		fmt.Print("\n")
 		if err := emitRLS(); err != nil {
 			return err
 		}
@@ -197,7 +211,7 @@ func cmdEmit(args []string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown emit kind %q (rls|definers|triggers|claims|pdp|all)", kind)
+		return fmt.Errorf("unknown emit kind %q (rls|definers|enablement|triggers|claims|pdp|all)", kind)
 	}
 }
 

@@ -442,6 +442,38 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	return frags, nil
 }
 
+// GovernedTables returns the sorted, de-duplicated set of tables the emitted
+// policies govern.
+func (r *RLSResult) GovernedTables() []string {
+	set := map[string]bool{}
+	for _, p := range r.Policies {
+		set[p.Table] = true
+	}
+	out := make([]string, 0, len(set))
+	for t := range set {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// EnablementSQL renders `ALTER TABLE … ENABLE/FORCE ROW LEVEL SECURITY` for every
+// governed table, sorted. This is part of the moat's owned surface: a generated
+// policy is INERT unless RLS is both ENABLED and FORCED on its table — a
+// non-enabled table ignores the policy entirely, and a non-FORCED table lets the
+// table owner (and any BYPASSRLS role) read past it. FORCE subjects even the
+// table owner to the policy. Both statements are idempotent (a no-op on a table
+// already in that state), so applying this to a live database only tightens
+// tables that were missing it.
+func (r *RLSResult) EnablementSQL() string {
+	var b strings.Builder
+	for _, t := range r.GovernedTables() {
+		fmt.Fprintf(&b, "ALTER TABLE public.%s ENABLE ROW LEVEL SECURITY;\n", t)
+		fmt.Fprintf(&b, "ALTER TABLE public.%s FORCE ROW LEVEL SECURITY;\n", t)
+	}
+	return b.String()
+}
+
 // PolicySQL renders the idempotent DROP + CREATE statement for every emitted
 // policy, all granted to `role`, sorted by (table, name) for deterministic
 // output. This is the Phase-B source-of-truth SQL: a goose migration re-creates
