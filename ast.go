@@ -352,6 +352,32 @@ type ViaObject struct {
 	Col    string // this object's FK column naming the related row
 }
 
+// ArgSrc is one argument of a ViaMemberIn check: either a claim key (`@sub`) or a
+// row column (a bare identifier). Exactly one field is set.
+type ArgSrc struct {
+	Claim string // a claim key, read via the claims accessor
+	Col   string // a column on the object's own row
+}
+
+// ViaMemberIn: `via memberin <level>(<principal-src>, <scope-src>)` (v3 WS6) — a
+// scoped role-membership check: does the PRINCIPAL hold ANY admin role assignment
+// at the SCOPE (a topology level, e.g. tenant)? Both args bind to either a claim
+// (`@sub`) or a row column. The one primitive expresses two control-plane shapes:
+//   - "the caller administers THIS tenant" (tenants picker): principal @sub, scope
+//     the row's id — auth.admin_memberin_tenant(<sub claim>, id);
+//   - "the row's admin is in MY session tenant" (admin_users co-tenant, the modern
+//     session-scoped replacement for the legacy admins_share_tenant peer rule):
+//     principal the row's id, scope @tenant_id — admin_memberin_tenant(id, <tenant_id claim>).
+// Compiles to a SECURITY DEFINER EXISTS over the role store (assignment with the
+// scope column = the scope arg, principal = the principal arg, kind = admin, not
+// revoked). Cost class Definer.
+type ViaMemberIn struct {
+	Level     string
+	Principal ArgSrc
+	Scope     ArgSrc
+}
+
+func (ViaMemberIn) isRepr()    {}
 func (ViaColumn) isRepr()      {}
 func (ViaEdge) isRepr()        {}
 func (ViaRole) isRepr()        {}

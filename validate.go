@@ -22,7 +22,7 @@ import (
 // per-spec rule.
 var tableOps = map[string]bool{"select": true, "insert": true, "update": true, "delete": true}
 var knownLayers = map[string]bool{"rls": true, "pdp": true, "kernel": true}
-var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true}
+var knownBuiltins = map[string]bool{"app_scope": true, "descriptor": true, "scoped": true, "session": true, "open": true}
 
 func Validate(s *Spec) error {
 	var errs []error
@@ -285,10 +285,27 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 	// multi-parent leaf → the union of its lineages, e.g. org_id + team_id +
 	// folder_id). It pins every ancestor column, never the leaf alone, never a
 	// stray level outside the leaf's ancestry.
+	leafLevel := ""
+	if len(o.Scoped) > 0 {
+		leafLevel = o.Scoped[len(o.Scoped)-1]
+	}
+	leafIsVirtual := false
+	if l := s.Topology.LevelByName(leafLevel); l != nil {
+		leafIsVirtual = l.Virtual
+	}
 	if len(o.Scoped) == 0 {
 		errs = append(errs, fmt.Errorf("line %d: object %q declares no scoped path (V6)", o.Pos.Line, o.Name))
-	} else if paths, perr := s.Topology.AncestorPaths(o.Scoped[len(o.Scoped)-1]); perr != nil {
-		errs = append(errs, fmt.Errorf("line %d: object %q scoped leaf %q is not a topology level (V6)", o.Pos.Line, o.Name, o.Scoped[len(o.Scoped)-1]))
+	} else if leafIsVirtual {
+		// GLOBAL object (v3 WS6): scoped at a VIRTUAL level (the platform root). It
+		// carries no containment columns — its access is the platform-role subject
+		// branch, not a scope chain — so its scoped path is exactly that one virtual
+		// root, never a non-virtual ancestry.
+		if len(o.Scoped) != 1 {
+			errs = append(errs, fmt.Errorf("line %d: object %q is scoped at virtual level %q (a global object) but declares a multi-level path %v — a global object carries no containment columns (V6)",
+				o.Pos.Line, o.Name, leafLevel, o.Scoped))
+		}
+	} else if paths, perr := s.Topology.AncestorPaths(leafLevel); perr != nil {
+		errs = append(errs, fmt.Errorf("line %d: object %q scoped leaf %q is not a topology level (V6)", o.Pos.Line, o.Name, leafLevel))
 	} else {
 		inAncestry := map[string]bool{}
 		for _, p := range paths {
@@ -339,6 +356,18 @@ func validateObject(s *Spec, o *Object, chain []*Level) error {
 		// (guaranteed by the parser; assert defensively that none is nil).
 		if r.Repr == nil {
 			errs = append(errs, fmt.Errorf("line %d: object %q relation %q has no representation (V9)", r.Pos.Line, o.Name, r.Name))
+		}
+		// A scoped role-membership (v3 WS6) must name a real scope level, and each
+		// argument must be EXACTLY one of a claim (`@key`) or a row column.
+		if mi, ok := r.Repr.(ViaMemberIn); ok {
+			if s.Topology.LevelByName(mi.Level) == nil {
+				errs = append(errs, fmt.Errorf("line %d: object %q relation %q via memberin references unknown level %q", r.Pos.Line, o.Name, r.Name, mi.Level))
+			}
+			for label, a := range map[string]ArgSrc{"principal": mi.Principal, "scope": mi.Scope} {
+				if (a.Claim == "") == (a.Col == "") {
+					errs = append(errs, fmt.Errorf("line %d: object %q relation %q via memberin %s arg must be exactly one of @claim or a column", r.Pos.Line, o.Name, r.Name, label))
+				}
+			}
 		}
 	}
 
@@ -541,6 +570,11 @@ func validatePerm(o *Object, pm *Perm, rels map[string]*Relation) error {
 			}
 			if t.Builtin == "descriptor" && o.Descriptor == nil {
 				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @descriptor but object %q has no descriptor block (§5.3)", pm.Pos.Line, o.Name, pm.Verb, o.Name))
+			}
+			// @open is the unrestricted-INSERT bootstrap only — never a read/update/
+			// delete grant (that would be a blanket leak).
+			if t.Builtin == "open" && pm.Maps != "insert" {
+				errs = append(errs, fmt.Errorf("line %d: permission %s.%s uses @open but maps to %q — @open is only valid on an insert (a bootstrap write the row engine cannot gate)", pm.Pos.Line, o.Name, pm.Verb, pm.Maps))
 			}
 		case isPermKeyLit(t.Ident):
 			if !hasPDP || hasRLS || hasKernel {

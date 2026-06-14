@@ -100,8 +100,12 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 			continue // no point checking columns of a missing table
 		}
 		// Scope columns (every ancestor level the object pins; the level-entity
-		// uses its own `id`).
+		// uses its own `id`). A VIRTUAL level carries no scope column (a global
+		// object scoped at the platform root has no containment column), so skip it.
 		for _, lvl := range o.Scoped {
+			if s.levelIsVirtual(lvl) {
+				continue
+			}
 			reqCol(o.Table, scopeCol(o, lvl), oc+" scope")
 		}
 		// Relations.
@@ -142,6 +146,15 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 				// The FK column on this object; the other object's table is checked
 				// when that object is validated.
 				reqCol(o.Table, repr.Col, rc)
+			case ViaMemberIn:
+				// Column-sourced args reference this object's own table; the role
+				// store (where membership lives) is checked under "Role stores" below.
+				if repr.Principal.Col != "" {
+					reqCol(o.Table, repr.Principal.Col, rc)
+				}
+				if repr.Scope.Col != "" {
+					reqCol(o.Table, repr.Scope.Col, rc)
+				}
 			}
 		}
 		// Descriptor: owner axis, mode column, grant store.
