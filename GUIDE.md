@@ -56,9 +56,11 @@ introspect → scaffold → edit the spec → validate → check → emit → ap
    # review it, then run it in your migration tool
    ```
 
-   Demesne owns only the idempotent **policy + definer + (closure) trigger**
-   layer. Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY`, and `GRANT`s
-   stay your own migrations.
+   Demesne owns the idempotent **policy + definer + closure-trigger + RLS
+   enablement** layer (`emit … all` includes `ENABLE`/`FORCE ROW LEVEL SECURITY`
+   per governed table — a policy is *inert* on a table where RLS isn't enabled,
+   and a non-`FORCE`d table lets the owner read past it, so the moat requires
+   both). Tables, columns, indexes, and `GRANT`s stay your own migrations.
 
 5. **Verify** drift any time:
 

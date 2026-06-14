@@ -57,9 +57,10 @@ isolation** — proving the emitted policies actually isolate — in two halves:
   policies, asserting tenant / project / owner / operator-grant (incl. expired) /
   public-mode / app-scope / write isolation all hold.
 
-Tables, columns, indexes, `ENABLE ROW LEVEL SECURITY` and `GRANT`s remain
-hand-written migrations; Demesne owns only the idempotent policy + definer + PDP
-+ claims layer.
+Demesne owns the idempotent policy + definer + closure-trigger + **RLS
+enablement** layer (`EnablementSQL` emits `ENABLE`/`FORCE ROW LEVEL SECURITY` per
+governed table — a policy is inert without it, so the moat requires it). Tables,
+columns, indexes, and `GRANT`s remain hand-written migrations.
 
 ## Known limitations
 
