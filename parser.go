@@ -719,6 +719,36 @@ func (p *parser) parseRepr() (Repr, error) {
 			Closure: clo, AncestorCol: cloCols[0], DescendantCol: cloCols[1],
 			Base: base, BaseID: baseCols[0], BaseParent: baseCols[1], Col: col,
 		}, nil
+	case p.acceptKw("group"):
+		// group <Closure>(<group>,<member>) edge <Edge>(<member>,<group>) on <col>
+		clo, cloCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(cloCols) != 2 {
+			return nil, p.errf("via group needs a closure table with 2 columns (group, member), got %d", len(cloCols))
+		}
+		if err := p.expectKw("edge"); err != nil {
+			return nil, err
+		}
+		edge, edgeCols, err := p.parseTableCols()
+		if err != nil {
+			return nil, err
+		}
+		if len(edgeCols) != 2 {
+			return nil, p.errf("via group edge needs 2 columns (member, group), got %d", len(edgeCols))
+		}
+		if err := p.expectKw("on"); err != nil {
+			return nil, err
+		}
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		return ViaGroup{
+			Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
+			Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
+		}, nil
 	default:
 		// via <fk column>
 		col, err := p.ident()

@@ -224,6 +224,27 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		}
 	}
 
+	// Nested-group membership lookups (v3 WS2): is a principal a transitive member
+	// of a group? An indexed EXISTS over the membership closure (group, member).
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			g, ok := r.Repr.(ViaGroup)
+			if !ok {
+				continue
+			}
+			name := g.Closure + "_member"
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, GenFn{
+				Name: name,
+				Sig:  "p_group text, p_member text",
+				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_group AND %s = p_member)", g.Closure, g.GroupCol, g.MemberCol),
+			})
+		}
+	}
+
 	// Stamp the configured definer schema on every generated function so CreateSQL
 	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
 	for i := range out {

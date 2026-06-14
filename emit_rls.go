@@ -459,6 +459,15 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 			return nil, err
 		}
 		return []string{fmt.Sprintf("%s.%s_reachable(%s, %s)", s.definerSchema(), repr.Closure, s.claim(custClaim), repr.Col)}, nil
+	case ViaGroup:
+		// Nested groups (v3 WS2): the caller's claim is a transitive member of the
+		// group named by the row's repr.Col — an indexed read over the
+		// trigger-maintained membership closure. Note the argument order is
+		// (group, member): the group is the row's column, the member is the claim.
+		if err := reqClaim(custClaim, obj, "group relation "+t.Ident); err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("%s.%s_member(%s, %s)", s.definerSchema(), repr.Closure, repr.Col, s.claim(custClaim))}, nil
 	case ViaRole:
 		// A role membership on this object → a project-role definer call over
 		// the object's scope columns. Convention: auth.admin_has_<obj>_role(

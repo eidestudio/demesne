@@ -121,19 +121,104 @@ func (s *Spec) EmitTriggers() []ClosureTrigger {
 // is visible in the generated output. Returns "" when there are no closures.
 func (s *Spec) TriggersSQL() string {
 	trigs := s.EmitTriggers()
-	if len(trigs) == 0 {
+	groups := s.EmitGroupTriggers()
+	if len(trigs) == 0 && len(groups) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("-- ===== Closure maintenance (WS3 Phase C) =====\n")
-	b.WriteString("-- COST: each of these triggers write-amplifies the base hierarchy — an\n")
-	b.WriteString("-- INSERT/UPDATE/DELETE fans out to the transitive closure. This is the\n")
-	b.WriteString("-- explicit, opt-in price of O(1) indexed reachability (`via closure`).\n\n")
+	b.WriteString("-- ===== Closure maintenance (via closure / via group) =====\n")
+	b.WriteString("-- COST: each of these triggers write-amplifies the base table — a change\n")
+	b.WriteString("-- fans out to the transitive closure. This is the explicit, opt-in price of\n")
+	b.WriteString("-- O(1) indexed reachability (`via closure`) / membership (`via group`).\n\n")
 	for _, c := range trigs {
 		b.WriteString(c.FunctionSQL())
 		b.WriteString("\n\n")
 		b.WriteString(c.TriggerSQL())
 		b.WriteString("\n")
 	}
+	for _, g := range groups {
+		b.WriteString(g.FunctionSQL())
+		b.WriteString("\n\n")
+		b.WriteString(g.TriggerSQL())
+		b.WriteString("\n")
+	}
 	return b.String()
+}
+
+// GroupTrigger is the generated nested-group membership maintenance (v3 WS2): a
+// statement-level trigger that REBUILDS the transitive-membership closure from the
+// M2M membership edge via a recursive CTE. Unlike the single-parent closure
+// (which maintains incrementally), group membership is a DAG, so a full recompute
+// per membership-edge change is the simple, always-correct choice — and the
+// write-amplification is the explicit, opt-in price (group memberships are
+// low-write relative to the data they gate).
+type GroupTrigger struct {
+	Schema     string
+	Closure    string
+	GroupCol   string
+	MemberCol  string
+	Edge       string
+	EdgeMember string
+	EdgeGroup  string
+}
+
+func (g GroupTrigger) schema() string {
+	if g.Schema != "" {
+		return g.Schema
+	}
+	return "auth"
+}
+
+func (g GroupTrigger) fnName() string { return g.schema() + "." + g.Closure + "_rebuild" }
+
+// FunctionSQL renders the recursive-CTE closure rebuild.
+func (g GroupTrigger) FunctionSQL() string {
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  DELETE FROM %[2]s;
+  INSERT INTO %[2]s (%[3]s, %[4]s)
+  WITH RECURSIVE tc AS (
+    SELECT %[6]s AS grp, %[5]s AS mem FROM %[7]s
+    UNION
+    SELECT tc.grp, e.%[5]s FROM tc JOIN %[7]s e ON e.%[6]s = tc.mem
+  )
+  SELECT grp, mem FROM tc ON CONFLICT DO NOTHING;
+  RETURN NULL;
+END;
+$$;`, g.fnName(), g.Closure, g.GroupCol, g.MemberCol, g.EdgeMember, g.EdgeGroup, g.Edge)
+}
+
+// TriggerSQL renders the statement-level binding (recompute once per statement).
+func (g GroupTrigger) TriggerSQL() string {
+	name := g.Closure + "_rebuild"
+	var b strings.Builder
+	fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON public.%s;\n", name, g.Edge)
+	fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON public.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, g.Edge, g.fnName())
+	return b.String()
+}
+
+// EmitGroupTriggers returns the membership-rebuild trigger for every distinct
+// group closure referenced by a `via group` relation, sorted by closure name.
+func (s *Spec) EmitGroupTriggers() []GroupTrigger {
+	seen := map[string]bool{}
+	var out []GroupTrigger
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			g, ok := r.Repr.(ViaGroup)
+			if !ok || seen[g.Closure] {
+				continue
+			}
+			seen[g.Closure] = true
+			out = append(out, GroupTrigger{
+				Schema: s.definerSchema(), Closure: g.Closure,
+				GroupCol: g.GroupCol, MemberCol: g.MemberCol,
+				Edge: g.Edge, EdgeMember: g.EdgeMember, EdgeGroup: g.EdgeGroup,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Closure < out[j].Closure })
+	return out
 }
