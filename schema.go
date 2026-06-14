@@ -15,6 +15,7 @@ import (
 // half of "point Demesne at your database and configure your authz" (WS4).
 type Schema struct {
 	tables map[string]map[string]Column // table → column name → column
+	fks    []ForeignKey                 // foreign keys (for topology inference)
 }
 
 // Column is one column of a table, as introspected.
@@ -24,7 +25,13 @@ type Column struct {
 	Nullable bool
 }
 
-// NewSchema returns an empty schema to populate via AddColumn.
+// ForeignKey is one FK edge: Table.Column references RefTable.RefColumn. Used by
+// Scaffold to infer the tenancy hierarchy (which tables are containers).
+type ForeignKey struct {
+	Table, Column, RefTable, RefColumn string
+}
+
+// NewSchema returns an empty schema to populate via AddColumn / AddForeignKey.
 func NewSchema() *Schema { return &Schema{tables: map[string]map[string]Column{}} }
 
 // AddColumn records a column on a table (creating the table entry if needed).
@@ -36,6 +43,11 @@ func (s *Schema) AddColumn(table, name, dataType string, nullable bool) {
 		s.tables[table] = map[string]Column{}
 	}
 	s.tables[table][name] = Column{Name: name, DataType: dataType, Nullable: nullable}
+}
+
+// AddForeignKey records a foreign-key edge (Table.Column → RefTable.RefColumn).
+func (s *Schema) AddForeignKey(table, column, refTable, refColumn string) {
+	s.fks = append(s.fks, ForeignKey{Table: table, Column: column, RefTable: refTable, RefColumn: refColumn})
 }
 
 func (s *Schema) hasTable(table string) bool {
