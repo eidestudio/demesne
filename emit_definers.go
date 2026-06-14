@@ -191,6 +191,30 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			Body: body,
 		})
 	}
+
+	// Closure-reachability lookups (WS3 Phase C): an indexed EXISTS over a
+	// trigger-maintained transitive-closure table — the row's node is reachable
+	// from the subject's granted ancestor. The maintenance trigger is generated
+	// separately (EmitTriggers); this is the read side the RLS term calls.
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			c, ok := r.Repr.(ViaClosure)
+			if !ok {
+				continue
+			}
+			name := c.Closure + "_reachable"
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, GenFn{
+				Name: name,
+				Sig:  "p_ancestor text, p_descendant text",
+				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_ancestor AND %s = p_descendant)", c.Closure, c.AncestorCol, c.DescendantCol),
+			})
+		}
+	}
+
 	// Stamp the configured definer schema on every generated function so CreateSQL
 	// qualifies them consistently (default "auth" keeps Foir's SQL byte-identical).
 	for i := range out {
