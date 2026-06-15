@@ -91,3 +91,18 @@ func (s *Spec) ReachGrants() []ReachGrant {
 func grantEdgeExists(edge string, conjuncts ...string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)", edge, strings.Join(conjuncts, " AND "))
 }
+
+// grantDefinerName is the name of an object descriptor's grant-list EXISTS
+// definer. A BARE edge (one descriptor per store) keeps the historical
+// <table>_grants — byte-identical for any spec not using a discriminator. A
+// DISCRIMINATED edge (several descriptors sharing one store) is suffixed by the
+// object, so each descriptor gets its own collision-free definer over the shared
+// table. Both emit sites (the definer body + the RLS call) MUST agree on this, so
+// it lives here, computed once.
+func grantDefinerName(obj *Object) string {
+	g := obj.Descriptor.Grants
+	if g.DiscrimCol != "" {
+		return g.Table + "_grants_" + obj.Name
+	}
+	return g.Table + "_grants"
+}

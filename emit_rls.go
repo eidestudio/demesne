@@ -674,7 +674,7 @@ func (s *Spec) emitDescriptor(obj *Object, pm *Perm, custClaim string) ([]string
 	// The explicit grant list applies to read/write/delete at the perm's access
 	// class — never to insert (you create your own rows, you aren't "granted" it).
 	if d.Grants != nil && descriptorHasList(d) && pm.Maps != "insert" {
-		frags = append(frags, fmt.Sprintf("%s.%s_grants(%s, %s, '%s')", s.definerSchema(), d.Grants.Table, s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
+		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), grantDefinerName(obj), s.claim(custClaim), obj.Table+".id", accessFor(pm.Maps)))
 	}
 	return frags, nil
 }

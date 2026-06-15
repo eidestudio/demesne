@@ -232,7 +232,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			continue
 		}
 		g := obj.Descriptor.Grants
-		name := g.Table + "_grants"
+		name := grantDefinerName(obj)
 		if seen[name] {
 			continue
 		}
@@ -241,13 +241,18 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		// actual principal, not an assumed "customer".
 		principal := s.descriptorPrincipal(obj)
 		// Same reachability-grant shape as a level Grant; this grant's conjuncts are
-		// the row target, the principal-kind gate, the grantee match, and the access.
-		body := grantEdgeExists(g.Table,
-			fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name),
+		// the row target, the principal-kind gate, the grantee match, and the access —
+		// plus a constant discriminator when several descriptors share this store.
+		conjuncts := []string{fmt.Sprintf("%s = p_%s_id", g.RecordCol, obj.Name)}
+		if g.DiscrimCol != "" {
+			conjuncts = append(conjuncts, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
+		}
+		conjuncts = append(conjuncts,
 			fmt.Sprintf("%s = '%s'", g.KindCol, kind),
 			fmt.Sprintf("%s = p_%s_id", g.PrincipalCol, principal),
 			fmt.Sprintf("%s = p_access", g.AccessCol),
 		)
+		body := grantEdgeExists(g.Table, conjuncts...)
 		out = append(out, GenFn{
 			Name: name,
 			Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
