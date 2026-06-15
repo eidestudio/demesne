@@ -257,12 +257,23 @@ type Mode struct {
 
 // AclEdge is the `record_acl(record_col, kind_col, principal_col, access_col)`
 // grant store: one row per (record, principal-kind, principal, access level).
+//
+// An OPTIONAL discriminator (`where <col> = "<val>"`) lets MULTIPLE descriptors
+// share ONE physical store, each filtering its rows by a constant — the general
+// capability behind a unified resource_acl(resource_type, resource_id, …). The
+// engine does NOT prescribe one-table-vs-many: a bare edge is one store per
+// object (byte-identical to before), a discriminated edge is a shared store; the
+// spec author chooses. When set, every generated grant predicate ANDs
+// `<DiscrimCol> = '<DiscrimVal>'`, and the grant definer is named per object so a
+// shared table yields one collision-free definer per descriptor.
 type AclEdge struct {
 	Table        string
 	RecordCol    string
 	KindCol      string
 	PrincipalCol string
 	AccessCol    string
+	DiscrimCol   string // "" when the edge is not discriminated (single-object store)
+	DiscrimVal   string // the constant this descriptor's rows carry in DiscrimCol
 }
 
 // Relation is an edge declaration: a name, the target type(s), how it is

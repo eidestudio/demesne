@@ -111,6 +111,11 @@ func Validate(s *Spec) error {
 	// recursive and loop forever at query time.
 	add(validateCrossObjectAcyclic(s))
 
+	// Descriptor grant stores: descriptors sharing a physical store MUST all be
+	// discriminated with DISTINCT discriminator values — otherwise their rows are
+	// indistinguishable and one object's grant would leak onto another's reads.
+	add(validateGrantStores(s))
+
 	// V10 — every PDP block targets a declared vocabulary (emit-site).
 	for _, pr := range s.Procedures {
 		if !vocabNames[pr.EmitSite] {
@@ -426,6 +431,54 @@ func validateDescriptor(o *Object) error {
 	// mode column.
 	if hasColumnMode && d.ModeCol == "" {
 		errs = append(errs, fmt.Errorf("line %d: object %q descriptor uses column modes (private/read) but declares no `mode via <column>`", d.Pos.Line, o.Name))
+	}
+	return errors.Join(errs...)
+}
+
+// validateGrantStores enforces the discriminated-edge contract: when more than
+// one descriptor points its grant list at the SAME physical table, every such
+// descriptor must be discriminated (`where <col> = "<val>"`), all on the SAME
+// discriminator column, with DISTINCT values. Otherwise two object types' grant
+// rows are indistinguishable in the shared store and a grant on one would be read
+// as a grant on another (a cross-type leak). A table used by exactly one
+// descriptor may be bare or discriminated — both are fine.
+func validateGrantStores(s *Spec) error {
+	type edgeRef struct {
+		obj *Object
+		g   *AclEdge
+	}
+	byTable := map[string][]edgeRef{}
+	var errs []error
+	for _, o := range s.Objects {
+		if o.Descriptor == nil || o.Descriptor.Grants == nil {
+			continue
+		}
+		g := o.Descriptor.Grants
+		// A discriminator must be complete (both column and value).
+		if (g.DiscrimCol == "") != (g.DiscrimVal == "") {
+			errs = append(errs, fmt.Errorf("object %q descriptor grants: a discriminator needs both a column and a value (`where <col> = \"<val>\"`)", o.Name))
+		}
+		byTable[g.Table] = append(byTable[g.Table], edgeRef{o, g})
+	}
+	for table, refs := range byTable {
+		if len(refs) < 2 {
+			continue // single owner — bare or discriminated, both fine
+		}
+		col := refs[0].g.DiscrimCol
+		seen := map[string]string{} // discrim value -> first object that used it
+		for _, r := range refs {
+			if r.g.DiscrimCol == "" {
+				errs = append(errs, fmt.Errorf("object %q shares grant store %q with another descriptor but is not discriminated — add `where <col> = \"<val>\"`", r.obj.Name, table))
+				continue
+			}
+			if r.g.DiscrimCol != col {
+				errs = append(errs, fmt.Errorf("descriptors sharing grant store %q must discriminate on the SAME column (%q vs %q)", table, col, r.g.DiscrimCol))
+			}
+			if prev, ok := seen[r.g.DiscrimVal]; ok {
+				errs = append(errs, fmt.Errorf("objects %q and %q share grant store %q with the SAME discriminator value %q — values must be distinct", prev, r.obj.Name, table, r.g.DiscrimVal))
+			}
+			seen[r.g.DiscrimVal] = r.obj.Name
+		}
 	}
 	return errors.Join(errs...)
 }

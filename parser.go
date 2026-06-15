@@ -1022,7 +1022,24 @@ func (p *parser) parseAclEdge() (*AclEdge, error) {
 	if len(cols) != 4 {
 		return nil, p.errf("grants edge needs 4 columns (record, kind, principal, access), got %d", len(cols))
 	}
-	return &AclEdge{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}, nil
+	e := &AclEdge{Table: tbl, RecordCol: cols[0], KindCol: cols[1], PrincipalCol: cols[2], AccessCol: cols[3]}
+	// Optional discriminator: `where <col> = "<val>"` — lets several descriptors
+	// share one store, each gated by a constant (the unified-resource_acl shape).
+	if p.acceptKw("where") {
+		col, err := p.ident()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tEq); err != nil {
+			return nil, err
+		}
+		val, err := p.expect(tString)
+		if err != nil {
+			return nil, err
+		}
+		e.DiscrimCol, e.DiscrimVal = col, val.lit
+	}
+	return e, nil
 }
 
 func (p *parser) parseObjectPerm() (*Perm, error) {

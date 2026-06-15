@@ -168,7 +168,11 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 				reqCol(o.Table, d.ModeCol, oc+" descriptor mode")
 			}
 			if g := d.Grants; g != nil && reqTable(g.Table, oc+" descriptor grants") {
-				for _, c := range []string{g.RecordCol, g.KindCol, g.PrincipalCol, g.AccessCol} {
+				cols := []string{g.RecordCol, g.KindCol, g.PrincipalCol, g.AccessCol}
+				if g.DiscrimCol != "" {
+					cols = append(cols, g.DiscrimCol)
+				}
+				for _, c := range cols {
 					reqCol(g.Table, c, oc+" descriptor grants")
 				}
 			}
