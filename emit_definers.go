@@ -24,7 +24,19 @@ type GenFn struct {
 	Name   string // unqualified function name
 	Schema string // the schema the function lives in ("" → "auth")
 	Sig    string // argument signature, e.g. "user_id text, check_tenant_id text"
-	Body   string // the SELECT expression (a boolean)
+	Body   string // the SELECT expression (a boolean), or a full query when RawBody
+	// Returns is the function's return type. Empty means "boolean" — the
+	// canonical predicate definer (the body is a boolean SELECT expression). A
+	// non-empty value (e.g. "TABLE(source text, principal_id text)") makes the
+	// function set-returning; the body is then a complete query (RawBody), not a
+	// scalar expression. Used by the accessor-enumerator (Expand): the read-side
+	// dual that lists WHO can access a row, generated from the same descriptor the
+	// RLS predicate compiles from.
+	Returns string
+	// RawBody renders Body verbatim inside the $$ … $$ (a complete SELECT / UNION
+	// query) instead of wrapping it as `SELECT <Body>;`. Set for set-returning
+	// definers whose body is a multi-branch query.
+	RawBody bool
 }
 
 // schema returns the function's schema, defaulting to "auth".
@@ -52,9 +64,17 @@ func (d GenFn) ArgTypes() string {
 
 // CreateSQL renders the full CREATE OR REPLACE FUNCTION statement.
 func (d GenFn) CreateSQL() string {
+	returns := d.Returns
+	if returns == "" {
+		returns = "boolean"
+	}
+	body := "  SELECT " + d.Body + ";"
+	if d.RawBody {
+		body = d.Body
+	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS boolean\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = public\nAS $$\n  SELECT %s;\n$$;",
-		d.schema(), d.Name, d.Sig, d.Body)
+		"CREATE OR REPLACE FUNCTION %s.%s(%s)\nRETURNS %s\nLANGUAGE sql\nSTABLE\nSECURITY DEFINER\nSET search_path = public\nAS $$\n%s\n$$;",
+		d.schema(), d.Name, d.Sig, returns, body)
 }
 
 // DefinersSQL renders the full CREATE OR REPLACE FUNCTION set for the generated
@@ -256,6 +276,29 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				Body: body,
 			})
 		}
+	}
+
+	// Accessor enumerators (Expand — the read-side dual of the RLS predicate): for
+	// every descriptor object with a grant store, auth.<table>_accessors(p_id)
+	// returns the rows (source, principal_kind, principal_id, access) of every
+	// NAMED accessor the SELECT predicate admits — owner column(s), the explicit
+	// grant rows, and the role plane (role-bearing admins reachable via @app_scope).
+	// "Public = everyone" is a category (the row's mode), not enumerated, so it is
+	// folded in by the caller as a flag, not a row. Built from the SAME descriptor
+	// the predicate compiles from (owner axes + grant edge + admin-owner gate + the
+	// role store), so Expand agrees with <table>_select by construction — no second
+	// evaluator. SECURITY DEFINER + set-returning; the handler calls it under the
+	// caller's claims.
+	for _, obj := range s.Objects {
+		if obj.Descriptor == nil || obj.Descriptor.Grants == nil {
+			continue
+		}
+		name := obj.Table + "_accessors"
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, s.accessorDefiner(obj))
 	}
 
 	// Closure-reachability lookups (WS3 Phase C): an indexed EXISTS over a
@@ -578,6 +621,93 @@ func (s *Spec) descriptorPrincipal(obj *Object) string {
 		return obj.Descriptor.Owner.Types[0]
 	}
 	return "principal"
+}
+
+// accessorDefiner builds the Expand enumerator auth.<table>_accessors(p_id) for a
+// descriptor object: a set-returning SECURITY DEFINER listing every NAMED
+// accessor the SELECT predicate admits, each tagged with its source. It is the
+// read-side inverse of emitDescriptor — owner column(s) → OWNER rows, the grant
+// edge → GRANT rows, the role store (gated by the admin-owner exclusion, exactly
+// as @app_scope is) → ROLE rows — so the enumerated set equals who <table>_select
+// admits (modulo the `public` category, surfaced as a flag, not a member list).
+// Owners report 'write' (full control), role-reachers 'read' (the category floor;
+// the grant rows carry their own revocable access verbatim).
+func (s *Spec) accessorDefiner(obj *Object) GenFn {
+	d := obj.Descriptor
+	owner, _ := d.Owner.Repr.(ViaColumn)
+	ownerKind := s.descriptorPrincipal(obj)
+
+	var branches []string
+	// OWNER — the customer-plane owner column.
+	branches = append(branches, fmt.Sprintf(
+		"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s IS NOT NULL",
+		ownerKind, owner.Column, obj.Table, owner.Column))
+
+	// OWNER — the optional admin-plane owner column (operator-private rows).
+	var adminOwnerCol string
+	if d.AdminOwner != nil {
+		if ac, ok := d.AdminOwner.Repr.(ViaColumn); ok {
+			adminOwnerCol = ac.Column
+			adminKind := "admin"
+			if len(d.AdminOwner.Types) > 0 {
+				adminKind = d.AdminOwner.Types[0]
+			}
+			branches = append(branches, fmt.Sprintf(
+				"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s IS NOT NULL",
+				adminKind, adminOwnerCol, obj.Table, adminOwnerCol))
+		}
+	}
+
+	// GRANT — the explicit resource_acl rows (the only revocable accessors),
+	// filtered by the descriptor's discriminator when the store is shared.
+	g := d.Grants
+	grantConds := []string{fmt.Sprintf("%s = p_id", g.RecordCol)}
+	if g.DiscrimCol != "" {
+		grantConds = append(grantConds, fmt.Sprintf("%s = '%s'", g.DiscrimCol, g.DiscrimVal))
+	}
+	branches = append(branches, fmt.Sprintf(
+		"SELECT 'grant'::text, %s, %s, %s\n    FROM %s WHERE %s",
+		g.KindCol, g.PrincipalCol, g.AccessCol, g.Table, strings.Join(grantConds, " AND ")))
+
+	// ROLE — the role plane: admins holding a role that reaches the row's scope
+	// (ancestor-or-equal: every scope level above the leaf pinned to equality —
+	// which excludes platform roles whose scope is NULL — and the leaf NULL-or-equal
+	// so a tenant-level role reaches a project row). Gated by the admin-owner
+	// exclusion, mirroring @app_scope: an admin-owned row is operator-private, so it
+	// has no role accessors. This is the only branch over current+future holders;
+	// the handler/UI may collapse it into a single "via role" category.
+	if rs := roleStoreByName(s); rs != nil {
+		var scopeConds []string
+		for i, lvl := range obj.Scoped {
+			if i >= len(rs.ScopeCols) {
+				break
+			}
+			rsCol := rs.ScopeCols[i]
+			rowCol := scopeCol(obj, lvl)
+			if i == len(obj.Scoped)-1 {
+				scopeConds = append(scopeConds, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = r.%s)", rsCol, rsCol, rowCol))
+			} else {
+				scopeConds = append(scopeConds, fmt.Sprintf("ra.%s = r.%s", rsCol, rowCol))
+			}
+		}
+		where := []string{"r.id = p_id"}
+		if adminOwnerCol != "" {
+			where = append(where, fmt.Sprintf("r.%s IS NULL", adminOwnerCol))
+		}
+		branches = append(branches, fmt.Sprintf(
+			"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s r\n    JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s\n    WHERE %s",
+			rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments,
+			rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(scopeConds, " AND "),
+			strings.Join(where, " AND ")))
+	}
+
+	return GenFn{
+		Name:    obj.Table + "_accessors",
+		Sig:     "p_id text",
+		Returns: "TABLE(source text, principal_kind text, principal_id text, access text)",
+		RawBody: true,
+		Body:    "  " + strings.Join(branches, "\n  UNION ALL\n  "),
+	}
 }
 
 // kernelDefiner builds the realtime/collab reachability gate over an object's
