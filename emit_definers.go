@@ -1007,19 +1007,28 @@ func (s *Spec) levelOnObjectPath(obj *Object, level string) bool {
 // kernelDefiner builds the realtime/collab reachability gate over an object's
 // own table: the owner axis (the owner principal owns the row).
 func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
-	var ownerCol string
+	var ownerVC *ViaColumn
 	for _, r := range obj.Relations {
 		if r.Name == "owner" {
 			if vc, ok := r.Repr.(ViaColumn); ok {
-				ownerCol = vc.Column
+				vc := vc
+				ownerVC = &vc
 			}
 		}
 	}
-	if ownerCol == "" {
+	if ownerVC == nil {
 		return GenFn{}, fmt.Errorf("object %q has a @kernel perm but no owner column", obj.Name)
 	}
 	principal := s.ownerPrincipalName(obj)
-	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND r.%s = p_%s_id)", obj.Table, obj.Name, ownerCol, principal)
+	ownerMatch := fmt.Sprintf("r.%s = p_%s_id", ownerVC.Column, principal)
+	// A discriminated owner (`via owner_id where owner_kind = "customer"`) gates the
+	// reachability match by the kind column, so the realtime gate stays kind-scoped
+	// under the unified (owner_id, owner_kind) shape (a customer never reaches an
+	// admin-owned row that happens to share an id).
+	if ownerVC.DiscrimCol != "" {
+		ownerMatch = fmt.Sprintf("%s AND r.%s = '%s'", ownerMatch, ownerVC.DiscrimCol, ownerVC.DiscrimVal)
+	}
+	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND %s)", obj.Table, obj.Name, ownerMatch)
 	return GenFn{
 		Name: fmt.Sprintf("%s_can_access_%s", principal, obj.Name),
 		Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),
