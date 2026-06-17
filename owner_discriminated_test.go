@@ -35,7 +35,7 @@ object record {
   relation owner:       customer | service via owner_id where owner_kind = "customer"
   relation admin_owner: admin via owner_id where owner_kind = "admin"
   relation grantee:     customer | admin via grant resource_acl(resource_id, principal_kind, principal_id, access) where resource_type = "record"
-  permission view = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public" + grantee:read   @rls maps select
+  permission view = @app_scope(exclude admin_owner) + owner + admin_owner + mode access_mode = "public" + grantee:read   @rls,kernel maps select
   permission edit = @app_scope(exclude admin_owner) + owner + admin_owner + grantee:write                               @rls maps update
 }
 `
@@ -79,5 +79,12 @@ func TestDiscriminatedOwnerColumn(t *testing.T) {
 		if !strings.Contains(acc, want) {
 			t.Errorf("accessor missing %q:\n%s", want, acc)
 		}
+	}
+
+	// The @kernel realtime gate also honors the owner discriminator (a customer
+	// never reaches an admin-owned row sharing an id).
+	kern := grantFnByName(t, s, "customer_can_access_record")
+	if !strings.Contains(kern, "r.owner_id = p_customer_id AND r.owner_kind = 'customer'") {
+		t.Errorf("kernel gate missing the owner_kind discriminator:\n%s", kern)
 	}
 }
