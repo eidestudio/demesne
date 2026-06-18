@@ -155,13 +155,29 @@ func (s *Spec) adminName() string {
 }
 
 // scopeCol returns the physical column for a topology level on this object: a
-// level-entity object uses its own `id` for its level (it IS that node);
-// everything else carries the `<level>_id` FK column.
-func scopeCol(obj *Object, lvl string) string {
+// level-entity object uses its own PRIMARY KEY for its own level (it IS that
+// node); everything else carries the level's scope column (its declared `col`,
+// else the `<level>_id` FK convention). Both the PK and the scope column are
+// spec-declarable, so the emitter assumes no `id` / `<level>_id` naming (EID-278).
+func (s *Spec) scopeCol(obj *Object, lvl string) string {
 	if obj.IsLevelEntity() && lvl == obj.Level {
-		return "id"
+		return obj.pk()
+	}
+	if l := s.Topology.LevelByName(lvl); l != nil {
+		return l.scopeColumn()
 	}
 	return lvl + "_id"
+}
+
+// claimKeyForLevel returns the JWT claim key carrying a topology level's id (its
+// declared `claim`, else the `<level>_id` convention) — the RHS every containment
+// equality reads. Decoupled from the scope column so a column and the claim that
+// selects it may be named differently (EID-278).
+func (s *Spec) claimKeyForLevel(level string) string {
+	if l := s.Topology.LevelByName(level); l != nil {
+		return l.claimKey()
+	}
+	return level + "_id"
 }
 
 // reqClaim fails closed when an owner / customer-plane term needs the per-record
@@ -224,7 +240,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			if obj.IsLevelEntity() || objIsGlobal {
 				top = append(top, fn)
 			} else {
-				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(objLeaf+"_id")))
+				top = append(top, fmt.Sprintf("(%s AND %s IS NULL)", fn, s.claim(s.claimKeyForLevel(objLeaf))))
 			}
 		case s.isPlatformRoleSubject(sub) && (objHasStaffTerm || (objIsGlobal && sub.Anchor == objLeaf)):
 			// Platform-anchored ROLE subject on a PURE-GLOBAL object (the `platform
@@ -244,7 +260,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			// reaches DOWN into its level's subtree, so it contributes nothing to a
 			// GLOBAL object above that level (which carries no such scope column).
 			if g := s.grantByName(sub.ReachGrant); g != nil && contains(obj.Scoped, g.Level) {
-				reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), scopeCol(obj, g.Level))
+				reach := fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(sub.Identifies), s.scopeCol(obj, g.Level))
 				if g.Level != objLeaf && !obj.IsLevelEntity() && !objIsGlobal {
 					// Sub-row object deeper than the grant's level: fold the grant into
 					// the grant-level containment column so the deeper scope (the
@@ -325,7 +341,7 @@ func (s *Spec) rlsPredicate(obj *Object, pm *Perm, cust *Subject, virtual map[st
 			if lvl.Virtual || (obj.IsLevelEntity() && lvl.Name == obj.Level) {
 				continue
 			}
-			colPred := fmt.Sprintf("%s = %s", scopeCol(obj, lvl.Name), s.claim(lvl.Name+"_id"))
+			colPred := fmt.Sprintf("%s = %s", s.scopeCol(obj, lvl.Name), s.claim(lvl.claimKey()))
 			if reaches := grantInject[lvl.Name]; len(reaches) > 0 {
 				// (<col> = <claim> OR grant_reach(...)) — the grant admits the operator
 				// at this level; deeper levels still AND in, keeping it scoped.
@@ -399,7 +415,7 @@ func (s *Spec) grantRefReach(obj *Object, grantName string) (string, error) {
 	if claim == "" {
 		return "", fmt.Errorf("object %q: grant %q has no reaching subject (a `subject … reach via grant %s`) to supply a claim", obj.Name, grantName, grantName)
 	}
-	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(claim), scopeCol(obj, g.Level)), nil
+	return fmt.Sprintf("%s.%s_reach(%s, %s)", s.definerSchema(), g.Table, s.claim(claim), s.scopeCol(obj, g.Level)), nil
 }
 
 // objectVerbPredicate returns the full RLS predicate of an object's @rls
@@ -675,7 +691,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// leaf claim. `@session(<rel>)` gates it by a role (e.g. project-admin
 		// of your selected project).
 		leaf := obj.Scoped[len(obj.Scoped)-1]
-		self := fmt.Sprintf("%s = %s", scopeCol(obj, leaf), s.claim(leaf+"_id"))
+		self := fmt.Sprintf("%s = %s", s.scopeCol(obj, leaf), s.claim(s.claimKeyForLevel(leaf)))
 		if t.SessionRel == "" {
 			return []string{self}, nil
 		}
@@ -700,7 +716,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		return nil, fmt.Errorf("unknown relation %q", t.Ident)
 	}
 	access := accessFor(pm.Maps)
-	pk := obj.Table + ".id"
+	pk := obj.Table + "." + obj.pk()
 	switch repr := r.Repr.(type) {
 	case ViaColumn:
 		// Inline owner axis: the FK column equals the owner's claim. The claim key
@@ -787,7 +803,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 		// <admin sub claim>, <scope cols>). A rank threshold narrows the fn.
 		var cols []string
 		for _, lvl := range obj.Scoped {
-			cols = append(cols, scopeCol(obj, lvl))
+			cols = append(cols, s.scopeCol(obj, lvl))
 		}
 		// No rank → "has any role" (auth.<admin>_has_<obj>_role); a rank threshold
 		// → the named rank predicate (auth.is_<rank>, e.g. is_project_admin).
@@ -802,7 +818,7 @@ func (s *Spec) emitTerm(obj *Object, pm *Perm, t *Term, rels map[string]*Relatio
 }
 
 // emitGrantFrags renders a grant relation's RLS fragments at a given access class:
-// one auth.<store>_grants[_<kind>](<principal claim>, <table>.id, '<access>') EXISTS
+// one auth.<store>_grants[_<kind>](<principal claim>, <table>.<pk>, '<access>') EXISTS
 // per declared grantee kind, read against that kind's own claim. This is the
 // de-prescribed form of emitDescriptor's grant-list disjuncts (same definer names,
 // same args), so a pure-relation object reproduces the descriptor's grant SQL.
@@ -813,7 +829,7 @@ func (s *Spec) emitGrantFrags(obj *Object, r *Relation, vg *ViaGrant, access str
 		if claim == "" {
 			return nil, fmt.Errorf("grant relation %q kind %q: no subject resolves a claim", r.Name, r.Types[i])
 		}
-		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+".id", access))
+		frags = append(frags, fmt.Sprintf("%s.%s(%s, %s, '%s')", s.definerSchema(), name, s.claim(claim), obj.Table+"."+obj.pk(), access))
 	}
 	return frags, nil
 }

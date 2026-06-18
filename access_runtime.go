@@ -30,6 +30,7 @@ type ResourceAccessSurface struct {
 	// ModeCol is the per-row visibility column (e.g. access_mode).
 	ModeCol string
 
+	pk         string // the resource table's primary-key column (default "id")
 	readModes  map[string]bool
 	grantKinds map[string]bool
 
@@ -61,6 +62,7 @@ func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, err
 	}
 	r := &ResourceAccessSurface{
 		Table:        obj.Table,
+		pk:           obj.pk(),
 		readModes:    map[string]bool{},
 		grantKinds:   map[string]bool{},
 		aclTable:     edge.Table,
@@ -73,7 +75,7 @@ func (s *Spec) ResourceAccessSurface(object string) (*ResourceAccessSurface, err
 		accessorFn:   fmt.Sprintf("%s.%s_accessors", s.definerSchema(), obj.Table),
 	}
 	for _, lvl := range obj.Scoped {
-		r.ScopeCols = append(r.ScopeCols, scopeCol(obj, lvl))
+		r.ScopeCols = append(r.ScopeCols, s.scopeCol(obj, lvl))
 	}
 	// Read modes come from the `mode <col> = "<v>"` terms in the object's permissions
 	// (the mode column + each sentinel); the grant kinds from the grant relation's
@@ -104,14 +106,14 @@ func (r *ResourceAccessSurface) GrantKindAllowed(kind string) bool { return r.gr
 
 // ModeSQL reads a resource's visibility mode: $1 = resource id.
 func (r *ResourceAccessSurface) ModeSQL() string {
-	return fmt.Sprintf("SELECT %s FROM %s WHERE id = $1", r.ModeCol, r.Table)
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s = $1", r.ModeCol, r.Table, r.pk)
 }
 
 // SetVisibilitySQL sets a resource's visibility mode: $1 = mode sentinel,
 // $2 = resource id. Rides the resource's own edit RLS (a non-editor matches 0
 // rows under USING — the caller treats 0 affected as a denial).
 func (r *ResourceAccessSurface) SetVisibilitySQL() string {
-	return fmt.Sprintf("UPDATE %s SET %s = $1 WHERE id = $2", r.Table, r.ModeCol)
+	return fmt.Sprintf("UPDATE %s SET %s = $1 WHERE %s = $2", r.Table, r.ModeCol, r.pk)
 }
 
 // GrantInsert builds the grant INSERT and its ordered args. scope is the

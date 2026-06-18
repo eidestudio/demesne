@@ -150,7 +150,7 @@ func ComposeCan(pointGoverned, pointAllow bool, pdp Decision) Decision {
 func (s *Spec) PointCheckSQL(object string) (string, error) {
 	for _, o := range s.Objects {
 		if o.Name == object {
-			return fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE id = $1)", o.Table), nil
+			return fmt.Sprintf("SELECT EXISTS (SELECT 1 FROM %s WHERE %s = $1)", o.Table, o.pk()), nil
 		}
 	}
 	return "", fmt.Errorf("PointCheckSQL: no object %q in the spec", object)

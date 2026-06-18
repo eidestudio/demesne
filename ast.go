@@ -140,11 +140,40 @@ type Level struct {
 	Name    string
 	Parents []string // empty = root; >1 = multi-parent (column-backed OR containment)
 	Virtual bool
-	Pos     Pos
+	// ScopeCol is the physical FK column that pins this level on a scoped sub-row
+	// table — the LHS of every containment equality `<col> = claim(<key>)`. ""
+	// defaults to the `<Name>_id` convention. Declaring it de-Foirs the assumption
+	// that a tenancy FK is named `<level>_id` (EID-278 / v3 WS4).
+	ScopeCol string
+	// ClaimKey is the JWT claim key that carries this level's id — the RHS of every
+	// containment equality, the claims-contract entry, the value a session mints.
+	// "" defaults to the `<Name>_id` convention. Declared INDEPENDENTLY of ScopeCol:
+	// the table column and the claim that selects it may be named differently
+	// (e.g. column `tenant_ref`, claim `tnt`) (EID-278 / v3 WS4).
+	ClaimKey string
+	Pos      Pos
 }
 
 // isRoot reports whether the level has no parent.
 func (l *Level) isRoot() bool { return len(l.Parents) == 0 }
+
+// scopeColumn is the physical FK column that pins this level on a scoped sub-row
+// table — the declared override, else the `<Name>_id` convention (EID-278).
+func (l *Level) scopeColumn() string {
+	if l.ScopeCol != "" {
+		return l.ScopeCol
+	}
+	return l.Name + "_id"
+}
+
+// claimKey is the JWT claim key carrying this level's id — the declared override,
+// else the `<Name>_id` convention (EID-278).
+func (l *Level) claimKey() string {
+	if l.ClaimKey != "" {
+		return l.ClaimKey
+	}
+	return l.Name + "_id"
+}
 
 // Vocabulary is a PDP verb grammar: the permission keys, the built-in role
 // presets, and (optionally) the delegation rank ladder.
@@ -220,8 +249,14 @@ type Template struct {
 type Object struct {
 	Name  string
 	Table string
+	// PK is the object table's primary-key column — the row identity the engine
+	// references in edge/grant/kernel predicates, the point-check, and (for a
+	// level-entity object) the level self column. "" defaults to the `id`
+	// convention. Declaring it de-Foirs the assumption that every governed table's
+	// PK is named `id` (EID-278 / v3 WS4).
+	PK    string
 	Level string // non-empty if this object IS a topology level node (its
-	// own pk = the level; self column is `id`, operator is
+	// own pk = the level; self column is the table PK, operator is
 	// ungated) — the admin/level-entity plane (e.g. projects)
 	Scoped    []string // levelchain — the root-anchored prefix of the chain
 	Relations []*Relation
@@ -239,6 +274,15 @@ type Object struct {
 // IsLevelEntity reports whether the object is the entity for a topology level
 // (vs a sub-row carrying the level FK columns).
 func (o *Object) IsLevelEntity() bool { return o.Level != "" }
+
+// pk returns the object table's primary-key column — the declared override, else
+// the `id` convention (EID-278).
+func (o *Object) pk() string {
+	if o.PK != "" {
+		return o.PK
+	}
+	return "id"
+}
 
 // HasGrantStore reports whether the object is a content object with an access grant
 // store — a descriptor `grants` edge OR a `via grant` relation. Such objects get a

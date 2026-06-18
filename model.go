@@ -249,9 +249,10 @@ func (s *Spec) nonVirtualChain() ([]*Level, error) {
 	return out, nil
 }
 
-// ClaimsContract is the set of JWT claim keys the spec implies (V5): one
-// `<level>_id` per non-virtual level, plus each subject's `identifies` key.
-// Sorted + de-duplicated. WithRLS / session minting are generated from this set.
+// ClaimsContract is the set of JWT claim keys the spec implies (V5): one claim
+// key per non-virtual level (its declared `claim`, else `<level>_id`), plus each
+// subject's `identifies` key. Sorted + de-duplicated. WithRLS / session minting
+// are generated from this set.
 func (s *Spec) ClaimsContract() ([]string, error) {
 	chain, err := s.nonVirtualChain()
 	if err != nil {
@@ -259,7 +260,7 @@ func (s *Spec) ClaimsContract() ([]string, error) {
 	}
 	set := map[string]bool{}
 	for _, l := range chain {
-		set[l.Name+"_id"] = true
+		set[l.claimKey()] = true
 	}
 	for _, sub := range s.Subjects {
 		if sub.Identifies != "" {
@@ -274,14 +275,14 @@ func (s *Spec) ClaimsContract() ([]string, error) {
 	return out, nil
 }
 
-// PinnedColumns returns the scope columns a subject's reachability predicate
-// pins to claim values per the §6.2 templates: every NON-virtual level from the
-// root down to (and including) the subject's anchor. A subject whose anchor is
-// the virtual root pins nothing — unconditional reach (the operator). The
-// boolean reports whether the anchor level is virtual.
+// PinnedColumns returns the claim keys a subject's reachability predicate pins to
+// per the §6.2 templates: every NON-virtual level's claim key (its declared
+// `claim`, else `<level>_id`) from the root down to (and including) the subject's
+// anchor. A subject whose anchor is the virtual root pins nothing — unconditional
+// reach (the operator). The boolean reports whether the anchor level is virtual.
 //
 // reach self vs descendants share the same pinned set; they differ only in
-// whether columns BELOW the anchor are free (descendants spans the subtree) —
+// whether levels BELOW the anchor are free (descendants spans the subtree) —
 // see FreeColumns. Sibling isolation (V7) is a consequence of a non-empty
 // pinned set.
 func (s *Spec) PinnedColumns(sub *Subject) (cols []string, virtualAnchor bool, err error) {
@@ -294,7 +295,7 @@ func (s *Spec) PinnedColumns(sub *Subject) (cols []string, virtualAnchor bool, e
 	virtualAnchor = path[len(path)-1].Virtual
 	for _, l := range path {
 		if !l.Virtual {
-			cols = append(cols, l.Name+"_id")
+			cols = append(cols, l.claimKey())
 		}
 	}
 	return cols, virtualAnchor, nil
@@ -318,7 +319,7 @@ func (s *Spec) FreeColumns(sub *Subject) ([]string, error) {
 	var free []string
 	for _, l := range desc {
 		if !l.Virtual {
-			free = append(free, l.Name+"_id")
+			free = append(free, l.claimKey())
 		}
 	}
 	return free, nil

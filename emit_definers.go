@@ -213,9 +213,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				continue
 			}
 			seen[name] = true
-			scopeCol := s.scopeColForLevel(rs, mi.Level)
+			sCol := s.scopeColForLevel(rs, mi.Level)
 			body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s = p_principal AND %s = p_%s AND %s = '%s' AND %s IS NULL)",
-				rs.Assignments, rs.SubjectCol, scopeCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
+				rs.Assignments, rs.SubjectCol, sCol, mi.Level, rs.KindCol, rs.KindVal, rs.RevokedCol)
 			out = append(out, GenFn{Name: name, Sig: fmt.Sprintf("p_principal text, p_%s text", mi.Level), Body: body})
 		}
 	}
@@ -391,7 +391,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 			out = append(out, GenFn{
 				Name: name,
 				Sig:  fmt.Sprintf("p_%s_id text", vo.Object),
-				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.id = p_%s_id AND (%s))", other.Table, other.Table, vo.Object, pred),
+				Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_%s_id AND (%s))", other.Table, other.Table, other.pk(), vo.Object, pred),
 			})
 		}
 	}
@@ -428,7 +428,7 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 				out = append(out, GenFn{
 					Name: canEdit,
 					Sig:  "p_id text",
-					Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.id = p_id AND (%s))", o.Table, o.Table, pred),
+					Body: fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s.%s = p_id AND (%s))", o.Table, o.Table, o.pk(), pred),
 				})
 			}
 			whens = append(whens, fmt.Sprintf("WHEN '%s' THEN %s.%s(p_id)", objectGrantEdge(o).DiscrimVal, s.definerSchema(), canEdit))
@@ -704,7 +704,7 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 			if len(r.Types) > 0 {
 				kind = r.Types[0]
 			}
-			branches = append(branches, ownerAccessorBranch(obj.Table, kind, vc, first))
+			branches = append(branches, ownerAccessorBranch(obj.Table, obj.pk(), kind, vc, first))
 			first = false
 		}
 		// The admin-owner exclusion that gates the role plane: the relation excluded
@@ -736,15 +736,16 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 // ownerAccessorBranch renders one OWNER enumeration branch — the owner column's
 // value as a 'write' accessor of the given kind, for rows owned via that axis. The
 // FIRST branch of the UNION carries the column aliases (it names the result set).
-func ownerAccessorBranch(table, kind string, vc ViaColumn, first bool) string {
+// pk is the object table's primary-key column (the row identity p_id binds to).
+func ownerAccessorBranch(table, pk, kind string, vc ViaColumn, first bool) string {
 	if first {
 		return fmt.Sprintf(
-			"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE id = p_id AND %s",
-			kind, vc.Column, table, ownerColPresent(vc))
+			"SELECT 'owner'::text AS source, '%s'::text AS principal_kind, %s AS principal_id, 'write'::text AS access\n    FROM %s WHERE %s = p_id AND %s",
+			kind, vc.Column, table, pk, ownerColPresent(vc))
 	}
 	return fmt.Sprintf(
-		"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE id = p_id AND %s",
-		kind, vc.Column, table, ownerColPresent(vc))
+		"SELECT 'owner'::text, '%s'::text, %s, 'write'::text\n    FROM %s WHERE %s = p_id AND %s",
+		kind, vc.Column, table, pk, ownerColPresent(vc))
 }
 
 // ownerExclCond is the "not owned via this axis" condition (r.-prefixed) the role
@@ -786,14 +787,14 @@ func (s *Spec) roleAccessorBranch(obj *Object, adminExcl string) (string, bool) 
 			break
 		}
 		rsCol := rs.ScopeCols[i]
-		rowCol := scopeCol(obj, lvl)
+		rowCol := s.scopeCol(obj, lvl)
 		if i == len(obj.Scoped)-1 {
 			scopeConds = append(scopeConds, fmt.Sprintf("(ra.%s IS NULL OR ra.%s = r.%s)", rsCol, rsCol, rowCol))
 		} else {
 			scopeConds = append(scopeConds, fmt.Sprintf("ra.%s = r.%s", rsCol, rowCol))
 		}
 	}
-	where := []string{"r.id = p_id"}
+	where := []string{"r." + obj.pk() + " = p_id"}
 	if adminExcl != "" {
 		where = append(where, adminExcl)
 	}
@@ -945,7 +946,7 @@ func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []s
 		}
 		raCol := rs.ScopeCols[i]
 		if onPath[lvl] {
-			conds = append(conds, fmt.Sprintf("ra.%s = e.%s", raCol, scopeCol(obj, lvl)))
+			conds = append(conds, fmt.Sprintf("ra.%s = e.%s", raCol, s.scopeCol(obj, lvl)))
 		} else {
 			conds = append(conds, fmt.Sprintf("ra.%s IS NULL", raCol))
 		}
@@ -962,9 +963,9 @@ func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []s
 			rs.RolesTable, rs.RolesID, rs.RoleCol, rs.KeyCol, strings.Join(q, ", "))
 	}
 	return fmt.Sprintf(
-		"SELECT '%s'::text AS source, '%s'::text AS principal_kind, ra.%s AS principal_id, '%s'::text AS access\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s%s\n    WHERE e.id = p_id",
+		"SELECT '%s'::text AS source, '%s'::text AS principal_kind, ra.%s AS principal_id, '%s'::text AS access\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND %s%s\n    WHERE e.%s = p_id",
 		source, rs.KindVal, rs.SubjectCol, access, obj.Table, rs.Assignments,
-		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(conds, " AND "), join)
+		rs.KindCol, rs.KindVal, rs.RevokedCol, strings.Join(conds, " AND "), join, obj.pk())
 }
 
 // memberinEnumSQL enumerates admins with ANY role at the given level's scope (the
@@ -972,16 +973,16 @@ func (s *Spec) roleEnumSQL(obj *Object, rs *RoleStore, level string, presets []s
 // tenant, regardless of project) — so the deeper scope columns are NOT NULL-pinned.
 func (s *Spec) memberinEnumSQL(obj *Object, rs *RoleStore, level string) string {
 	return fmt.Sprintf(
-		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND ra.%s = e.%s\n    WHERE e.id = p_id",
+		"SELECT 'role'::text, '%s'::text, ra.%s, 'read'::text\n    FROM %s e JOIN %s ra ON ra.%s = '%s' AND ra.%s IS NULL AND ra.%s = e.%s\n    WHERE e.%s = p_id",
 		rs.KindVal, rs.SubjectCol, obj.Table, rs.Assignments, rs.KindCol, rs.KindVal,
-		rs.RevokedCol, s.scopeColForLevel(rs, level), scopeCol(obj, level))
+		rs.RevokedCol, s.scopeColForLevel(rs, level), s.scopeCol(obj, level), obj.pk())
 }
 
 // impersonationEnumSQL enumerates the operators holding an ACTIVE impersonation
 // grant reaching this row's grant-level scope (e.g. the tenant) — the IMPERSONATION
 // plane, the same active-grant gate impersonation_grants_reach checks.
 func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
-	conds := []string{fmt.Sprintf("ig.%s = e.%s", g.LevelCol, scopeCol(obj, g.Level))}
+	conds := []string{fmt.Sprintf("ig.%s = e.%s", g.LevelCol, s.scopeCol(obj, g.Level))}
 	if g.ActiveCol != "" {
 		conds = append(conds, fmt.Sprintf("ig.%s IS NULL", g.ActiveCol))
 	}
@@ -989,8 +990,8 @@ func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 		conds = append(conds, fmt.Sprintf("ig.%s > now()", g.ExpiresCol))
 	}
 	return fmt.Sprintf(
-		"SELECT 'impersonation'::text, 'admin'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.id = p_id",
-		g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "))
+		"SELECT 'impersonation'::text, 'admin'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.%s = p_id",
+		g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
 }
 
 // levelOnObjectPath reports whether a topology level is on the object's scope path
@@ -1028,7 +1029,7 @@ func (s *Spec) kernelDefiner(obj *Object) (GenFn, error) {
 	if ownerVC.DiscrimCol != "" {
 		ownerMatch = fmt.Sprintf("%s AND r.%s = '%s'", ownerMatch, ownerVC.DiscrimCol, ownerVC.DiscrimVal)
 	}
-	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.id = p_%s_id AND %s)", obj.Table, obj.Name, ownerMatch)
+	body := fmt.Sprintf("EXISTS (SELECT 1 FROM %s r WHERE r.%s = p_%s_id AND %s)", obj.Table, obj.pk(), obj.Name, ownerMatch)
 	return GenFn{
 		Name: fmt.Sprintf("%s_can_access_%s", principal, obj.Name),
 		Sig:  fmt.Sprintf("p_%s_id text, p_%s_id text, p_access text", principal, obj.Name),

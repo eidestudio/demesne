@@ -36,6 +36,7 @@ object doc {
 // fullSchema returns a Schema that satisfies bindSpec exactly.
 func fullSchema() *Schema {
 	sc := NewSchema()
+	sc.AddColumn("docs", "id", "text", false) // the object's primary key (EID-278 bind-check)
 	for _, c := range []string{"tenant_id", "project_id", "owner_id", "visibility"} {
 		sc.AddColumn("docs", c, "text", c == "visibility")
 	}
