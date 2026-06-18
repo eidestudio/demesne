@@ -59,6 +59,10 @@ type RoleAssignmentSurface struct {
 	GrantedAtCol string // grant timestamp (set to now() on (re)assign / ordered-by on list)
 	GrantedByCol string // grantor principal id
 	RevokedByCol string // revoker principal id
+	// ExtraCols are adopter context columns on the assignment tuple (e.g. an RP/client
+	// scope) — written, projected, and part of the touch conflict key (as nullable
+	// context). The rolestore analogue of the grant's ExtraCols.
+	ExtraCols []string
 	// Roles join (for ListForPrincipal — the assignment's role key + materialized perms).
 	RolesTable string
 	RolesID    string
@@ -98,6 +102,7 @@ func (s *Spec) RoleAssignmentSurface(rolestore string) (*RoleAssignmentSurface, 
 		GrantedAtCol: rs.GrantedAtCol,
 		GrantedByCol: rs.GrantedByCol,
 		RevokedByCol: rs.RevokedByCol,
+		ExtraCols:    append([]string(nil), rs.ExtraCols...),
 		RolesTable:   rs.RolesTable,
 		RolesID:      rs.RolesID,
 		KeyCol:       rs.KeyCol,
@@ -117,7 +122,7 @@ func (r *RoleAssignmentSurface) assignmentCols() []string {
 			cols = append(cols, c)
 		}
 	}
-	return cols
+	return append(cols, r.ExtraCols...)
 }
 
 // AssignInsert builds the INSERT that confers a role on a principal at a scope, and
@@ -129,8 +134,24 @@ func (r *RoleAssignmentSurface) assignmentCols() []string {
 // write moat (an out-of-scope INSERT is denied). Mirrors access_runtime.go's
 // GrantInsert.
 //
-// Args order: assignmentID, KindVal, subjectID, roleID, scope…, [grantedBy].
-func (r *RoleAssignmentSurface) AssignInsert(assignmentID, subjectID, roleID string, scope []string, grantedBy string) (string, []any) {
+// Args order: assignmentID, KindVal, subjectID, roleID, scope…, [grantedBy], extra…
+// (the declared ExtraCols in order; a declared col absent from `extra` is written NULL).
+func (r *RoleAssignmentSurface) AssignInsert(assignmentID, subjectID, roleID string, scope []string, grantedBy string, extra map[string]any) (string, []any) {
+	return r.assignSQL(false, assignmentID, subjectID, roleID, scope, grantedBy, extra)
+}
+
+// AssignTouchInsert is the idempotent (TOUCH) variant: re-assigning a tuple of the same
+// natural identity REACTIVATES it (NULLs the soft-revoke columns, refreshes granted_at /
+// granted_by) instead of erroring on the unique constraint — the soft-revoke-aware
+// analogue of Zanzibar/SpiceDB's TOUCH, the retry-safe write. The conflict key is the
+// assignment's identity (kind, subject, role bare; the nullable scope + extra context
+// columns COALESCE'd — see touchOnConflict). Use this where re-granting should reinstate
+// a revoked assignment; AssignInsert (CREATE) errors on conflict.
+func (r *RoleAssignmentSurface) AssignTouchInsert(assignmentID, subjectID, roleID string, scope []string, grantedBy string, extra map[string]any) (string, []any) {
+	return r.assignSQL(true, assignmentID, subjectID, roleID, scope, grantedBy, extra)
+}
+
+func (r *RoleAssignmentSurface) assignSQL(touch bool, assignmentID, subjectID, roleID string, scope []string, grantedBy string, extra map[string]any) (string, []any) {
 	cols := []string{r.PK, r.KindCol, r.SubjectCol, r.RoleCol}
 	args := []any{assignmentID, r.KindVal, subjectID, roleID}
 	for i, c := range r.ScopeCols {
@@ -145,13 +166,45 @@ func (r *RoleAssignmentSurface) AssignInsert(assignmentID, subjectID, roleID str
 		cols = append(cols, r.GrantedByCol)
 		args = append(args, grantedBy)
 	}
+	for _, c := range r.ExtraCols {
+		cols = append(cols, c)
+		args = append(args, extra[c])
+	}
 	ph := make([]string, len(cols))
 	for i := range ph {
 		ph[i] = fmt.Sprintf("$%d", i+1)
 	}
-	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING %s",
-		r.Assignments, strings.Join(cols, ", "), strings.Join(ph, ", "), strings.Join(r.assignmentCols(), ", "))
+	conflict := ""
+	if touch {
+		conflict = " " + r.touchClause()
+	}
+	sql := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)%s RETURNING %s",
+		r.Assignments, strings.Join(cols, ", "), strings.Join(ph, ", "), conflict, strings.Join(r.assignmentCols(), ", "))
 	return sql, args
+}
+
+// touchClause builds the reactivate-on-conflict tail for an assignment via the shared
+// reachability-grant touch helper: the conflict key is (kind, subject, role) bare +
+// the nullable scope + extra context columns COALESCE'd; on conflict it reactivates
+// (revoked → NULL, revoked_by → NULL, granted_at → now(), granted_by → EXCLUDED),
+// emitting only the audit columns the rolestore declares.
+func (r *RoleAssignmentSurface) touchClause() string {
+	bare := []string{r.KindCol, r.SubjectCol, r.RoleCol}
+	nullable := append(append([]string(nil), r.ScopeCols...), r.ExtraCols...)
+	var sets []string
+	if r.RevokedCol != "" {
+		sets = append(sets, r.RevokedCol+" = NULL")
+	}
+	if r.RevokedByCol != "" {
+		sets = append(sets, r.RevokedByCol+" = NULL")
+	}
+	if r.GrantedAtCol != "" {
+		sets = append(sets, r.GrantedAtCol+" = now()")
+	}
+	if r.GrantedByCol != "" {
+		sets = append(sets, fmt.Sprintf("%s = EXCLUDED.%s", r.GrantedByCol, r.GrantedByCol))
+	}
+	return touchOnConflict(bare, nullable, sets)
 }
 
 // RevokeSQL builds the soft-revoke: an UPDATE that stamps the revoked column (and the

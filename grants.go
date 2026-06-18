@@ -87,6 +87,26 @@ func grantEdgeExists(edge string, conjuncts ...string) string {
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)", edge, strings.Join(conjuncts, " AND "))
 }
 
+// touchOnConflict renders the idempotent-write ("touch") tail shared by every
+// reachability-grant WRITE surface — the write-dual of grantEdgeExists, and the
+// soft-revoke-aware analogue of Zanzibar/SpiceDB's TOUCH (create-or-reactivate, the
+// retry-safe write). On a conflict with an existing tuple of the same NATURAL IDENTITY
+// it REACTIVATES rather than erroring (CREATE) or duplicating: `ON CONFLICT (<key>) DO
+// UPDATE SET <sets>`. Because Demesne keeps a soft-revoke AUDIT trail (revoked_at /
+// revoked_by) where Zanzibar hard-deletes, the reactivation NULLs those columns rather
+// than just create-if-absent. The conflict key is the tuple's identity: the
+// always-present columns bare, the nullable scope/context columns wrapped in
+// COALESCE(.,”) so a NULL compares equal (the unique-index-over-nullables idiom). The
+// shape is unified across grant edges; the columns + sets stay each edge's own — the
+// write-side mirror of grantEdgeExists's "shared shape, per-caller conjuncts".
+func touchOnConflict(bareKey, nullableKey, sets []string) string {
+	key := append([]string(nil), bareKey...)
+	for _, c := range nullableKey {
+		key = append(key, fmt.Sprintf("COALESCE(%s, '')", c))
+	}
+	return fmt.Sprintf("ON CONFLICT (%s) DO UPDATE SET %s", strings.Join(key, ", "), strings.Join(sets, ", "))
+}
+
 // *ViaGrant is a per-row reachability grant expressed as a GENERIC relation (the
 // de-prescribed descriptor grant list). Same concept as an AclEdge, surfaced
 // through the relation grammar.
