@@ -1007,8 +1007,10 @@ func (s *Spec) structuralTermEnum(obj *Object, t *Term, rels map[string]*Relatio
 	case ViaRole:
 		if len(r.Types) > 0 {
 			if st := s.subjectByName(r.Types[0]); st != nil && s.isPlatformRoleSubject(st) {
-				// The platform-staff plane: has_<anchor>_role holders (NULL scope).
-				return []string{s.roleEnumSQL(obj, rs, st.Anchor, presetLevels[st.Anchor], "staff", "write")}, nil
+				// The platform-role plane: has_<anchor>_role holders (NULL scope). The
+				// `source` tag is the SUBJECT's own name (spec-derived — "staff" for Foir,
+				// whatever an adopter names its root-role subject), never a baked literal.
+				return []string{s.roleEnumSQL(obj, rs, st.Anchor, presetLevels[st.Anchor], st.Name, "write")}, nil
 			}
 		}
 		objLevel := obj.Scoped[len(obj.Scoped)-1]
@@ -1093,9 +1095,18 @@ func (s *Spec) impersonationEnumSQL(obj *Object, g *Grant) string {
 	if g.ExpiresCol != "" {
 		conds = append(conds, fmt.Sprintf("ig.%s > now()", g.ExpiresCol))
 	}
+	// source + principal_kind are spec-DERIVED, never baked Foir literals: the source
+	// is the grant's own name (e.g. "impersonation" for Foir, "break_glass" for another
+	// adopter), and the grantee's kind is the rolestore's declared kind value (the
+	// principal kind a grant confers reach to — "admin" for Foir), falling back to the
+	// grant name when the spec declares no rolestore (EID-267 / EID-315).
+	kind := g.Name
+	if rs := roleStoreByName(s); rs != nil {
+		kind = rs.KindVal
+	}
 	return fmt.Sprintf(
-		"SELECT 'impersonation'::text, 'admin'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.%s = p_id",
-		g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
+		"SELECT '%s'::text, '%s'::text, ig.%s, 'write'::text\n    FROM %s e JOIN %s ig ON %s\n    WHERE e.%s = p_id",
+		g.Name, kind, g.GranteeCol, obj.Table, g.Table, strings.Join(conds, " AND "), obj.pk())
 }
 
 // levelOnObjectPath reports whether a topology level is on the object's scope path
