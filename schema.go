@@ -99,14 +99,19 @@ func (s *Spec) ValidateAgainst(sc *Schema) error {
 		if !reqTable(o.Table, oc) {
 			continue // no point checking columns of a missing table
 		}
+		// The object's primary-key column must exist — it carries the row identity
+		// the edge/grant/kernel predicates and the point-check reference (declared
+		// `pk`, else `id`). De-Foirs the `id` assumption (EID-278).
+		reqCol(o.Table, o.pk(), oc+" pk")
 		// Scope columns (every ancestor level the object pins; the level-entity
-		// uses its own `id`). A VIRTUAL level carries no scope column (a global
-		// object scoped at the platform root has no containment column), so skip it.
+		// uses its own primary key). A VIRTUAL level carries no scope column (a
+		// global object scoped at the platform root has no containment column), so
+		// skip it.
 		for _, lvl := range o.Scoped {
 			if s.levelIsVirtual(lvl) {
 				continue
 			}
-			reqCol(o.Table, scopeCol(o, lvl), oc+" scope")
+			reqCol(o.Table, s.scopeCol(o, lvl), oc+" scope")
 		}
 		// Relations.
 		for _, r := range o.Relations {

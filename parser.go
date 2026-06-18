@@ -196,8 +196,10 @@ func (p *parser) parseTopology() (*Topology, error) {
 			return nil, err
 		}
 		lv.Name = name
-		// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')? — any order,
-		// all optional. `parents` (plural) declares a multi-parent DAG level.
+		// ('parent' IDENT | 'parents' IDENT (',' IDENT)*)? ('virtual')?
+		// ('col' IDENT)? ('claim' IDENT)? — any order, all optional. `parents`
+		// (plural) declares a multi-parent DAG level; `col`/`claim` override the
+		// `<name>_id` scope-column / claim-key conventions independently (EID-278).
 		for {
 			if p.acceptKw("parent") {
 				par, err := p.ident()
@@ -223,6 +225,22 @@ func (p *parser) parseTopology() (*Topology, error) {
 			}
 			if p.acceptKw("virtual") {
 				lv.Virtual = true
+				continue
+			}
+			if p.acceptKw("col") {
+				c, err := p.ident()
+				if err != nil {
+					return nil, err
+				}
+				lv.ScopeCol = c
+				continue
+			}
+			if p.acceptKw("claim") {
+				c, err := p.ident()
+				if err != nil {
+					return nil, err
+				}
+				lv.ClaimKey = c
 				continue
 			}
 			break
@@ -475,6 +493,11 @@ func (p *parser) parseObject() (*Object, error) {
 	}
 	if o.Table, err = p.ident(); err != nil {
 		return nil, err
+	}
+	if p.acceptKw("pk") { // optional: the table's primary-key column (default "id")
+		if o.PK, err = p.ident(); err != nil {
+			return nil, err
+		}
 	}
 	if p.acceptKw("level") { // optional: this object IS a topology level node
 		if o.Level, err = p.ident(); err != nil {
