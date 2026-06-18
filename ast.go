@@ -200,7 +200,13 @@ type RoleStore struct {
 	GrantedAtCol string
 	GrantedByCol string
 	RevokedByCol string
-	Pos          Pos
+	// ExtraCols are adopter context columns on the assignment tuple the grammar does
+	// not model semantically (e.g. an RP/client scope) — declared `column <col>`
+	// (repeatable). The write surface WRITES them (value supplied per-call) and
+	// PROJECTS them, and they join the touch (idempotent-write) conflict key as nullable
+	// context. The rolestore analogue of the grant's ExtraCols / Zanzibar caveat-context.
+	ExtraCols []string
+	Pos       Pos
 }
 
 // assignmentPK returns the role-assignment table's primary-key column — the

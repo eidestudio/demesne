@@ -1446,7 +1446,7 @@ func (p *parser) parseUngoverned() (*Ungoverned, error) {
 
 func roleStoreKeyword(s string) bool {
 	switch s {
-	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions", "pk", "granted":
+	case "assignments", "kind", "subject", "scope", "rolejoin", "revoked", "permissions", "pk", "granted", "column":
 		return true
 	}
 	return false
@@ -1489,6 +1489,11 @@ func (p *parser) parseRoleStore() (*RoleStore, error) {
 			rs.IDCol, err = p.ident()
 		case p.acceptKw("granted"):
 			err = p.parseRoleStoreGranted(rs)
+		case p.acceptKw("column"):
+			var col string
+			if col, err = p.ident(); err == nil {
+				rs.ExtraCols = append(rs.ExtraCols, col)
+			}
 		default:
 			return nil, p.errf("unexpected %s %q in rolestore", p.peekKind(), p.cur().lit)
 		}
