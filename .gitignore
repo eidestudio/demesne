@@ -9,3 +9,6 @@ coverage.*
 .DS_Store
 .idea/
 .vscode/
+
+# VS Code extension build artifact
+*.vsix
