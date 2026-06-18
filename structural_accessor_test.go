@@ -135,3 +135,72 @@ func TestStructuralAccessorEnumerator(t *testing.T) {
 		t.Errorf("tenant missing any-role memberin branch (project not NULL-pinned):\n%s", ten)
 	}
 }
+
+// nonFoirAccessorSpec is structAccessorSpec with the three formerly-hardcoded labels
+// renamed away from Foir vocabulary: the level-grant is `breakglass` (not
+// "impersonation"), the root-role subject is `superuser` (not "staff"), and the
+// rolestore kind is `operator` (not "admin"). The accessor enumerator's source +
+// principal_kind must track THESE names — proving they are spec-derived, not baked.
+const nonFoirAccessorSpec = `
+topology {
+  level platform virtual
+  level tenant   parent platform
+  level project  parent tenant
+}
+vocabulary admin {
+  permission c:r
+  preset project_admin @ project = c:r
+  preset tenant_owner  @ tenant  = *
+  rank tenant_owner > project_admin
+}
+vocabulary platform { permission p:m  preset platform_admin @ platform = p:m }
+rolestore admin {
+  assignments role_assignments
+  kind        principal_kind = "operator"
+  subject     principal_id
+  scope       tenant_id project_id
+  rolejoin    role_id roles id key
+  revoked     revoked_at
+}
+grant breakglass at tenant
+  via edge breakglass_grants(grantee_id, tenant_id)
+  active revoked_at expires expires_at
+subject operator  { anchor platform reach via grant breakglass identifies sub roles none }
+subject superuser { anchor platform reach descendants identifies sub roles configurable platform }
+subject member    { anchor tenant   reach descendants identifies sub roles configurable admin binds admin }
+object project {
+  table  projects
+  level  project
+  scoped tenant > project
+  relation crew:   superuser via role
+  relation tenant: tenant via tenant_id
+  relation member: member via role
+  permission view = crew + tenant->owner + member + @session @rls maps select
+}
+`
+
+// The structural accessor enumerator must derive the `source` tag and the grant
+// branch's `principal_kind` from the SPEC — never the Foir literals 'impersonation'
+// / 'staff' / 'admin'. A non-Foir spec must emit non-Foir output.
+func TestStructuralAccessorEnumerator_DomainAgnostic(t *testing.T) {
+	proj := findAccessor(t, nonFoirAccessorSpec, "projects")
+
+	// The grant branch: source = the grant NAME, principal_kind = the rolestore KIND.
+	if !strings.Contains(proj, "'breakglass'::text, 'operator'::text") {
+		t.Errorf("grant branch did not derive source/kind from the spec (want 'breakglass'/'operator'):\n%s", proj)
+	}
+	// The root-role plane: source = the SUBJECT name.
+	if !strings.Contains(proj, "'superuser'::text AS source") {
+		t.Errorf("platform-role branch did not derive source from the subject name (want 'superuser'):\n%s", proj)
+	}
+	// Role branches carry the spec's kind, not the Foir literal.
+	if !strings.Contains(proj, "'operator'::text AS principal_kind") {
+		t.Errorf("role branch did not derive principal_kind from the rolestore (want 'operator'):\n%s", proj)
+	}
+	// None of the Foir vocabulary may appear in a non-Foir spec's output.
+	for _, leak := range []string{"impersonation", "'staff'", "'admin'"} {
+		if strings.Contains(proj, leak) {
+			t.Errorf("domain leak: emitted accessor contains Foir literal %q for a non-Foir spec:\n%s", leak, proj)
+		}
+	}
+}
