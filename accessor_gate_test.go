@@ -67,7 +67,7 @@ func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
 	if ok, reason := cover(obj); !ok {
 		t.Fatalf("ViaGroup should now be covered, got refusal: %s", reason)
 	}
-	br := defGroupAccessorBranches(obj, obj.Perms[0], map[string]*Relation{"team": obj.Relations[0]})
+	br := (&Spec{}).defGroupAccessorBranches(obj, obj.Perms[0], map[string]*Relation{"team": obj.Relations[0]})
 	if len(br) != 1 {
 		t.Fatalf("want 1 group branch, got %d", len(br))
 	}
@@ -78,6 +78,44 @@ func TestAccessorCoverage_ViaGroup_CoveredWithBranch(t *testing.T) {
 		if !strings.Contains(br[0], want) {
 			t.Errorf("group branch missing %q:\n%s", want, br[0])
 		}
+	}
+}
+
+// A MATERIALIZED via-group relation's accessor branch reverse-reads the flat
+// (auth.<table>_<rel>_flat, resource_id → principal) instead of joining the closure —
+// the WS3 read fast-path. The flat name it reads MUST be the one EmitMaterializedFlats
+// emits, or the accessor would point at a non-existent table.
+func TestAccessorBranch_MaterializedGroup_ReadsFlat(t *testing.T) {
+	g := ViaGroup{Closure: "tc", GroupCol: "grp", MemberCol: "mem", Edge: "te", EdgeMember: "mem", EdgeGroup: "grp", Col: "team_id", Materialized: true}
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Relations: []*Relation{{Name: "team", Types: []string{"customer"}, Repr: g}},
+		Perms:     []*Perm{selectPerm([]*Term{{Ident: "team"}}, &PermNode{Op: "leaf", Term: &Term{Ident: "team"}})},
+	}
+	s := &Spec{Objects: []*Object{obj}}
+	br := s.defGroupAccessorBranches(obj, obj.Perms[0], map[string]*Relation{"team": obj.Relations[0]})
+	if len(br) != 1 {
+		t.Fatalf("want 1 group branch, got %d", len(br))
+	}
+	// Reads the flat by resource_id; does NOT join the closure (no walk).
+	for _, want := range []string{
+		"'group'::text", "'customer'::text", "f.principal_id",
+		"FROM auth.docs_team_flat f", "WHERE f.resource_id = p_id",
+	} {
+		if !strings.Contains(br[0], want) {
+			t.Errorf("materialized group branch missing %q:\n%s", want, br[0])
+		}
+	}
+	if strings.Contains(br[0], "JOIN tc") {
+		t.Errorf("materialized branch must not walk the closure:\n%s", br[0])
+	}
+	// The flat name read MUST match what EmitMaterializedFlats names.
+	flats := s.EmitMaterializedFlats()
+	if len(flats) != 1 {
+		t.Fatalf("want 1 materialized flat, got %d", len(flats))
+	}
+	if got, want := s.groupFlatName(obj, obj.Relations[0], g), flats[0].qFlat(); got != want {
+		t.Errorf("accessor reads %q but EmitMaterializedFlats emits %q", got, want)
 	}
 }
 
