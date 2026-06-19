@@ -43,6 +43,11 @@ func TestEmitMaterializedFlats_GroupRelation(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
+		// The rebuild writes the PRIVATE auth flat + must read ALL edges to build a
+		// COMPLETE index — so it runs SECURITY DEFINER, never as the authenticated
+		// invoker (which would hit permission-denied on auth.<flat> + an RLS-truncated
+		// rebuild). EID-350: same bug class as the changelog triggers.
+		"SECURITY DEFINER",
 		"DELETE FROM auth.docs_team_flat",
 		"SELECT o.id, 'customer', c.mem",
 		"FROM public.docs o JOIN public.tc c ON c.grp = o.team_id",

@@ -57,6 +57,8 @@ func (c ClosureTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   IF (TG_OP = 'INSERT') THEN
@@ -196,6 +198,8 @@ func (g GroupTrigger) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
@@ -309,6 +313,8 @@ func (m MaterializedFlat) FunctionSQL() string {
 	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $$
 BEGIN
   -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ

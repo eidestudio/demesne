@@ -81,6 +81,8 @@ func TestGroup_NestedMembership(t *testing.T) {
 	fn := gts[0].FunctionSQL()
 	for _, frag := range []string{
 		"CREATE OR REPLACE FUNCTION auth.group_closure_rebuild()",
+		"SECURITY DEFINER", // EID-350: full rebuild must read all edges + write as owner
+
 		"DELETE FROM group_closure;",
 		"WITH RECURSIVE tc AS (",
 		"SELECT group_id AS grp, member_id AS mem FROM group_members",        // base
