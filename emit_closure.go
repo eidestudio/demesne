@@ -198,6 +198,13 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
+  -- COMMITTED can otherwise lose a revocation — a second writer's DELETE cannot see the
+  -- first writer's freshly-inserted (uncommitted) rows, so a revoked membership survives.
+  -- This closure backs the via-group RLS floor (directly via <Closure>_member, and via any
+  -- materialized flat built from it), so a stale survivor is a leak. SHARE ROW EXCLUSIVE
+  -- self-conflicts so writers serialize, while ACCESS SHARE readers are NOT blocked.
+  LOCK TABLE %[2]s IN SHARE ROW EXCLUSIVE MODE;
   DELETE FROM %[2]s;
   INSERT INTO %[2]s (%[3]s, %[4]s)
   WITH RECURSIVE tc AS (
@@ -295,6 +302,12 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+  -- Serialize concurrent rebuilds (CONCURRENCY): a full DELETE+INSERT under READ
+  -- COMMITTED can otherwise lose a revocation — a second writer's DELETE cannot see the
+  -- first writer's freshly-inserted (uncommitted) rows, so a revoked row survives → the
+  -- RLS floor reads a stale flat (a leak). SHARE ROW EXCLUSIVE self-conflicts so writers
+  -- serialize, while the ACCESS SHARE reader (the <flat>_member SELECT) is NOT blocked.
+  LOCK TABLE %[2]s IN SHARE ROW EXCLUSIVE MODE;
   DELETE FROM %[2]s;
   INSERT INTO %[2]s (resource_id, principal_kind, principal_id)
   SELECT o.%[3]s, '%[4]s', c.%[5]s
