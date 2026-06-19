@@ -463,6 +463,11 @@ type ViaGroup struct {
 	EdgeMember string // edge member column ("member ∈ group")
 	EdgeGroup  string // edge group column
 	Col        string // the object row's column naming the granted group
+	// Materialized opts the relation into a flat (resource_id, principal) index
+	// (auth.<obj>_<rel>_flat), trigger-maintained from the object row ⋈ the closure,
+	// that the accessor (and, once oracle-gated, RLS) reads instead of recursing —
+	// the WS3 grant-dominant-list fast path (EID-344). Cost class Closure.
+	Materialized bool
 }
 
 // ViaObject: `via object <Object>-><verb> on <col>` — a cross-object permission

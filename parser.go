@@ -983,9 +983,11 @@ func (p *parser) parseReprGroup() (Repr, error) {
 	if err != nil {
 		return nil, err
 	}
+	mat := p.acceptKw("materialized")
 	return ViaGroup{
 		Closure: clo, GroupCol: cloCols[0], MemberCol: cloCols[1],
 		Edge: edge, EdgeMember: edgeCols[0], EdgeGroup: edgeCols[1], Col: col,
+		Materialized: mat,
 	}, nil
 }
 

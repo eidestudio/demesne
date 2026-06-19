@@ -242,3 +242,103 @@ func (s *Spec) EmitGroupTriggers() []GroupTrigger {
 	sort.Slice(out, func(i, j int) bool { return out[i].Closure < out[j].Closure })
 	return out
 }
+
+// MaterializedFlat (WS3, EID-344) is a flat (resource_id, principal_kind, principal_id)
+// index for a `via group ... materialized` relation — the object row ⋈ the group
+// closure, trigger-maintained so the accessor (and, once oracle-gated, RLS) reads a
+// sargable point/reverse lookup instead of recursing the closure per row. Maintenance is
+// full-recompute (correct across every mutation path; the incremental / two-level
+// Leopard optimization is a later WS3 step). Nothing reads it until wired, so emitting it
+// is additive (byte-identical for any spec with no `materialized` relation).
+type MaterializedFlat struct {
+	Schema      string // definer schema — the flat table + rebuild fn live here
+	TableSchema string // the object/closure table schema
+	Flat        string // flat table name (<objTable>_<rel>_flat)
+	ObjTable    string
+	ObjPK       string
+	Col         string // the object's group column
+	Closure     string
+	GroupCol    string
+	MemberCol   string
+	Kind        string // principal_kind value (the relation's first type)
+}
+
+func (m MaterializedFlat) schema() string {
+	if m.Schema != "" {
+		return m.Schema
+	}
+	return "auth"
+}
+func (m MaterializedFlat) tableSchema() string {
+	if m.TableSchema != "" {
+		return m.TableSchema
+	}
+	return "public"
+}
+func (m MaterializedFlat) qFlat() string  { return m.schema() + "." + m.Flat }
+func (m MaterializedFlat) fnName() string { return m.schema() + "." + m.Flat + "_rebuild" }
+
+// TableSQL creates the flat table + forward (resource) and reverse (principal) indexes.
+func (m MaterializedFlat) TableSQL() string {
+	return fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %[1]s (resource_id text NOT NULL, principal_kind text NOT NULL, principal_id text NOT NULL);\n"+
+			"CREATE INDEX IF NOT EXISTS %[2]s_res_idx ON %[1]s (resource_id);\n"+
+			"CREATE INDEX IF NOT EXISTS %[2]s_prin_idx ON %[1]s (principal_id);\n",
+		m.qFlat(), m.Flat)
+}
+
+// FunctionSQL renders the full-recompute rebuild: flat = object row ⋈ closure (resource
+// → transitive group members), tagged with the relation's principal kind.
+func (m MaterializedFlat) FunctionSQL() string {
+	return fmt.Sprintf(`CREATE OR REPLACE FUNCTION %[1]s()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  DELETE FROM %[2]s;
+  INSERT INTO %[2]s (resource_id, principal_kind, principal_id)
+  SELECT o.%[3]s, '%[4]s', c.%[5]s
+  FROM %[6]s.%[7]s o JOIN %[6]s.%[8]s c ON c.%[9]s = o.%[10]s;
+  RETURN NULL;
+END;
+$$;`, m.fnName(), m.qFlat(), m.ObjPK, m.Kind, m.MemberCol, m.tableSchema(), m.ObjTable, m.Closure, m.GroupCol, m.Col)
+}
+
+// TriggerSQL binds the rebuild to BOTH the object table (its group column / row set) and
+// the closure (membership) — statement-level, so the flat is recomputed once the group
+// closure trigger has settled.
+func (m MaterializedFlat) TriggerSQL() string {
+	var b strings.Builder
+	for _, tbl := range []string{m.ObjTable, m.Closure} {
+		name := m.Flat + "_rebuild_" + tbl
+		fmt.Fprintf(&b, "DROP TRIGGER IF EXISTS %s ON %s.%s;\n", name, m.tableSchema(), tbl)
+		fmt.Fprintf(&b, "CREATE TRIGGER %s AFTER INSERT OR UPDATE OR DELETE ON %s.%s FOR EACH STATEMENT EXECUTE FUNCTION %s();\n", name, m.tableSchema(), tbl, m.fnName())
+	}
+	return b.String()
+}
+
+// EmitMaterializedFlats returns a MaterializedFlat for every `via group ... materialized`
+// relation, in (object, relation) order.
+func (s *Spec) EmitMaterializedFlats() []MaterializedFlat {
+	var out []MaterializedFlat
+	for _, obj := range s.Objects {
+		for _, r := range obj.Relations {
+			g, ok := r.Repr.(ViaGroup)
+			if !ok || !g.Materialized {
+				continue
+			}
+			kind := ""
+			if len(r.Types) > 0 {
+				kind = r.Types[0]
+			}
+			out = append(out, MaterializedFlat{
+				Schema: s.definerSchema(), TableSchema: s.tableSchema(),
+				Flat:     obj.Table + "_" + r.Name + "_flat",
+				ObjTable: obj.Table, ObjPK: obj.pk(), Col: g.Col,
+				Closure: g.Closure, GroupCol: g.GroupCol, MemberCol: g.MemberCol,
+				Kind: kind,
+			})
+		}
+	}
+	return out
+}
