@@ -179,6 +179,51 @@ func TestAccessorCoverage_IntersectionExclusion_FailsClosed(t *testing.T) {
 	}
 }
 
+// Structural path: role + memberin + builtin on a level entity is fully enumerable
+// (Foir's tenant/project shape) → covered.
+func TestStructuralCoverage_RoleMemberinBuiltin_Covered(t *testing.T) {
+	obj := &Object{
+		Name: "tenant", Table: "tenants", Level: "tenant",
+		Relations: []*Relation{
+			{Name: "staff", Types: []string{"staff"}, Repr: ViaRole{}},
+			{Name: "access", Types: []string{"admin"}, Repr: ViaMemberIn{Level: "tenant"}},
+		},
+		Perms: []*Perm{selectPerm(
+			[]*Term{{Ident: "staff"}, {Ident: "access"}, {Builtin: "session"}},
+			&PermNode{Op: "or", Kids: []*PermNode{
+				{Op: "leaf", Term: &Term{Ident: "staff"}},
+				{Op: "leaf", Term: &Term{Ident: "access"}},
+				{Op: "leaf", Term: &Term{Builtin: "session"}},
+			}},
+		)},
+	}
+	if ok, reason := structuralAccessorCoverage(obj); !ok {
+		t.Errorf("role+memberin+builtin level entity should be covered, got: %s", reason)
+	}
+}
+
+// Structural path: an owner (ViaColumn) term the structural enumerator can't enumerate
+// must fail closed (it would silently drop that accessor).
+func TestStructuralCoverage_UncoveredOwner_FailsClosed(t *testing.T) {
+	obj := &Object{
+		Name: "tenant", Table: "tenants", Level: "tenant",
+		Relations: []*Relation{
+			{Name: "staff", Types: []string{"staff"}, Repr: ViaRole{}},
+			{Name: "owner", Types: []string{"admin"}, Repr: ViaColumn{Column: "owner_id"}},
+		},
+		Perms: []*Perm{selectPerm(
+			[]*Term{{Ident: "staff"}, {Ident: "owner"}},
+			&PermNode{Op: "or", Kids: []*PermNode{
+				{Op: "leaf", Term: &Term{Ident: "staff"}},
+				{Op: "leaf", Term: &Term{Ident: "owner"}},
+			}},
+		)},
+	}
+	if ok, _ := structuralAccessorCoverage(obj); ok {
+		t.Error("an owner (ViaColumn) term on a level entity must fail closed")
+	}
+}
+
 func TestAccessorCoverage_NoSelectPerm_Covered(t *testing.T) {
 	if ok, _ := cover(&Object{Name: "x", Table: "xs"}); !ok {
 		t.Error("no SELECT perm → nothing to enumerate → covered")
