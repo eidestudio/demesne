@@ -140,7 +140,9 @@ func (s *Spec) EmitDefiners() ([]GenFn, error) {
 		return nil, err
 	}
 	s.defEmitGrantRelations(&out, seen)
-	s.defEmitAccessors(&out, seen)
+	if err := s.defEmitAccessors(&out, seen); err != nil {
+		return nil, err
+	}
 	if err := s.defEmitStructuralAccessors(&out, seen); err != nil {
 		return nil, err
 	}
@@ -368,7 +370,7 @@ func (s *Spec) defEmitGrantRelations(out *[]GenFn, seen map[string]bool) {
 // SAME composed relations the predicate compiles from, so Expand agrees with
 // <table>_select by construction — no second evaluator. SECURITY DEFINER +
 // set-returning; the handler calls it under the caller's claims.
-func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) {
+func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) error {
 	for _, obj := range s.Objects {
 		if _, vg := grantRelation(obj); vg == nil {
 			continue
@@ -377,9 +379,98 @@ func (s *Spec) defEmitAccessors(out *[]GenFn, seen map[string]bool) {
 		if seen[name] {
 			continue
 		}
+		// Fail closed (EID-342 / WS1): the accessor enumerator below covers only
+		// owner / grant / role over a UNION of branches. If this object's SELECT
+		// permission uses a relation it cannot reverse, or intersection/exclusion it
+		// cannot represent, emitting it anyway would silently UNDER-report who can
+		// access a row — a fail-OPEN "who can access X". Refuse to emit it (a build
+		// error naming the gap) until the WS1 reverse builders cover that shape,
+		// rather than ship a wrong answer.
+		if ok, reason := accessorCoverage(obj); !ok {
+			return fmt.Errorf("object %q: cannot soundly enumerate accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
+		}
 		seen[name] = true
 		*out = append(*out, s.pureAccessorDefiner(obj))
 	}
+	return nil
+}
+
+// accessorReprCovered reports whether the accessor enumerator (pureAccessorDefiner)
+// has a reverse branch for a relation's Repr today: owner (ViaColumn), grant
+// (ViaGrant), and the role plane (ViaRole). The transitive / cross-object reprs
+// (edge, closure, group, object, composition, memberin) have NO accessor branch yet,
+// so an enumerator built over a SELECT permission that uses one silently under-reports.
+// WS1's reverse builders extend this set; until then those shapes fail closed.
+func accessorReprCovered(r Repr) bool {
+	switch r.(type) {
+	case ViaColumn, ViaGrant, ViaRole:
+		return true
+	default:
+		return false
+	}
+}
+
+// accessorTreeOp returns the first intersection/exclusion operator in a permission
+// tree ("and" or "and not"), or "" for a union-only tree (or / bare leaf). The
+// accessor enumerator only UNIONs its branches, so it cannot represent INTERSECT
+// (and) or EXCEPT (and not) — a tree using either cannot be reverse-enumerated soundly
+// yet.
+func accessorTreeOp(n *PermNode) string {
+	if n == nil {
+		return ""
+	}
+	switch n.Op {
+	case "not":
+		return "and not"
+	case "and":
+		return "and"
+	}
+	for _, k := range n.Kids {
+		if op := accessorTreeOp(k); op != "" {
+			return op
+		}
+	}
+	return ""
+}
+
+// accessorCoverage reports whether the accessor enumerator can SOUNDLY enumerate an
+// object's SELECT permission — i.e. its reverse (who-can-access) answer is complete.
+// It is unsound, and so refused, when the SELECT permission either (a) uses
+// intersection or exclusion (the enumerator only unions) or (b) references a relation
+// whose Repr has no accessor branch yet. Returns (false, reason) in that case.
+// Non-relation leaves (builtins, visibility modes folded as a category flag, grant /
+// kind terms) are not relation reverses and do not trip the gate.
+func accessorCoverage(obj *Object) (bool, string) {
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	if sel == nil {
+		return true, ""
+	}
+	if op := accessorTreeOp(sel.Tree); op != "" {
+		return false, fmt.Sprintf("its SELECT permission uses %q, which the union-only enumerator cannot represent (reverse INTERSECT/EXCEPT is WS1)", op)
+	}
+	for _, t := range sel.Expr {
+		if t == nil || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		if !accessorReprCovered(r.Repr) {
+			return false, fmt.Sprintf("relation %q (%T) has no accessor branch yet (reverse builder is WS1)", t.Ident, r.Repr)
+		}
+	}
+	return true, ""
 }
 
 // defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
