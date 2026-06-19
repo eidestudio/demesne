@@ -465,8 +465,14 @@ func (s *Spec) accessorCoverageSeen(obj *Object, seen map[string]bool) (bool, st
 	if sel == nil {
 		return true, ""
 	}
-	if op := accessorTreeOp(sel.Tree); op != "" {
-		return false, fmt.Sprintf("its SELECT permission uses %q, which the union-only enumerator cannot represent (reverse INTERSECT/EXCEPT is WS1)", op)
+	if accessorTreeOp(sel.Tree) != "" {
+		// Intersection/exclusion: the tree composer handles it iff every leaf is a
+		// composable content relation (owner/grant/group/closure/object). A leaf it
+		// cannot compose (a builtin / the @app_scope role plane) fails closed.
+		if _, ok := s.accessorTreeSQL(obj, sel.Tree, rels); !ok {
+			return false, "its SELECT permission intersects/excludes over a term the accessor enumerator cannot compose (only owner/grant/group/closure/object leaves)"
+		}
+		return true, ""
 	}
 	for _, t := range sel.Expr {
 		if t == nil || t.Ident == "" {
@@ -971,6 +977,15 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 		}
 	}
 
+	// and/and-not: compose the accessor set with set algebra (the coverage gate has
+	// already verified every leaf is composable). A union-only tree falls through to the
+	// flat bucketed path below, which stays byte-identical.
+	if sel != nil && accessorTreeOp(sel.Tree) != "" {
+		if composed, ok := s.accessorTreeSQL(obj, sel.Tree, rels); ok {
+			return accessorGenFn(obj.Table, []string{composed})
+		}
+	}
+
 	var branches []string
 	var adminExcl string
 	if sel != nil {
@@ -1132,6 +1147,122 @@ func objectAccessorBranch(table, pk string, vo ViaObject, otherTable, schema str
 	return fmt.Sprintf(
 		"SELECT a.source, a.principal_kind, a.principal_id, a.access\n    FROM %s t\n    JOIN LATERAL %s.%s_accessors(t.%s) a ON true\n    WHERE t.%s = p_id",
 		table, schema, otherTable, vo.Col, pk)
+}
+
+// accessorBranchForTerm returns one tree LEAF's accessor branch — the per-term form of
+// the bucketed builders, for the tree composer (and/and-not). It covers the composable
+// CONTENT relations (owner / grant / group / closure / object); a builtin, the
+// @app_scope role plane, or an unknown leaf returns ok=false so the composer fails
+// closed (those are not clean per-principal set terms to intersect/exclude).
+func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Relation) (string, bool) {
+	if t == nil || t.Ident == "" {
+		return "", false
+	}
+	r := rels[t.Ident]
+	if r == nil {
+		return "", false
+	}
+	kind := ""
+	if len(r.Types) > 0 {
+		kind = r.Types[0]
+	}
+	switch repr := r.Repr.(type) {
+	case ViaColumn:
+		return ownerAccessorBranch(obj.Table, obj.pk(), kind, repr, false), true
+	case ViaGrant:
+		return grantAccessorBranch(&repr), true
+	case ViaGroup:
+		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr), true
+	case ViaClosure:
+		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), true
+	case ViaObject:
+		if ok, _ := s.viaObjectCovered(repr, map[string]bool{}); !ok {
+			return "", false
+		}
+		other := s.objectByName(repr.Object)
+		if other == nil {
+			return "", false
+		}
+		return objectAccessorBranch(obj.Table, obj.pk(), repr, other.Table, s.definerSchema()), true
+	}
+	return "", false
+}
+
+// accessorTreeSQL composes a permission tree's accessor enumeration with set algebra:
+// or → UNION ALL; and → the first positive branch FILTERED to also-appear-in every
+// other positive ((kind,id) IN …) and NOT-appear-in every negative ((kind,id) NOT IN …).
+// Set membership is on PRINCIPAL IDENTITY (kind, id), never the whole row — `owner` and
+// `grantee` carry different source/access for the same principal, so a full-row
+// INTERSECT/EXCEPT would be wrong — and the composed result keeps the base positive's
+// provenance. Returns ok=false (→ fail closed) when a leaf is not a composable content
+// relation, or a `not` has no positive base to bound it. Only invoked for trees that
+// actually use and/and-not; a union-only tree keeps the byte-identical flat path.
+func (s *Spec) accessorTreeSQL(obj *Object, n *PermNode, rels map[string]*Relation) (string, bool) {
+	if n == nil {
+		return "", false
+	}
+	switch n.Op {
+	case "leaf":
+		return s.accessorBranchForTerm(obj, n.Term, rels)
+	case "or":
+		var parts []string
+		for _, k := range n.Kids {
+			sql, ok := s.accessorTreeSQL(obj, k, rels)
+			if !ok {
+				return "", false
+			}
+			parts = append(parts, "("+sql+")")
+		}
+		if len(parts) == 0 {
+			return "", false
+		}
+		return strings.Join(parts, "\n  UNION ALL\n  "), true
+	case "and":
+		var positives, negatives []*PermNode
+		for _, k := range n.Kids {
+			if k.Op == "not" {
+				if len(k.Kids) != 1 {
+					return "", false
+				}
+				negatives = append(negatives, k.Kids[0])
+			} else {
+				positives = append(positives, k)
+			}
+		}
+		if len(positives) == 0 {
+			return "", false // a bare exclusion has no bounded positive base
+		}
+		base, ok := s.accessorTreeSQL(obj, positives[0], rels)
+		if !ok {
+			return "", false
+		}
+		idIn := func(sub string) string {
+			return fmt.Sprintf("(a.principal_kind, a.principal_id) IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+		}
+		idNotIn := func(sub string) string {
+			return fmt.Sprintf("(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (%s) b(source, principal_kind, principal_id, access))", sub)
+		}
+		var filters []string
+		for _, p := range positives[1:] {
+			sub, ok := s.accessorTreeSQL(obj, p, rels)
+			if !ok {
+				return "", false
+			}
+			filters = append(filters, idIn(sub))
+		}
+		for _, ng := range negatives {
+			sub, ok := s.accessorTreeSQL(obj, ng, rels)
+			if !ok {
+				return "", false
+			}
+			filters = append(filters, idNotIn(sub))
+		}
+		if len(filters) == 0 {
+			return base, true
+		}
+		return fmt.Sprintf("SELECT a.* FROM (%s) a(source, principal_kind, principal_id, access)\n    WHERE %s", base, strings.Join(filters, "\n      AND ")), true
+	}
+	return "", false // a bare `not` (no positive base) is not enumerable
 }
 
 // defOwnerAccessorBranches renders the OWNER enumeration branches — the owner
