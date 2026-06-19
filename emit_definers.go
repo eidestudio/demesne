@@ -1009,7 +1009,7 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 	// GROUP — nested-group membership relations: the transitive members of the group
 	// named by the row's column, a reverse read of the SAME closure the forward term
 	// checks (WS1 reverse builder).
-	branches = append(branches, defGroupAccessorBranches(obj, sel, rels)...)
+	branches = append(branches, s.defGroupAccessorBranches(obj, sel, rels)...)
 
 	// CLOSURE — hierarchy-reachability relations: the ANCESTORS of the row's node, a
 	// reverse read of the SAME (ancestor, descendant) closure the forward
@@ -1030,7 +1030,7 @@ func (s *Spec) pureAccessorDefiner(obj *Object) GenFn {
 // the forward `<Closure>_member(row.<Col>, claim)` term tests: the members of the group
 // the row names. Because it reads the same committed closure rows the forward predicate
 // does, the enumeration agrees with the predicate by construction.
-func defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
+func (s *Spec) defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation) []string {
 	if sel == nil {
 		return nil
 	}
@@ -1051,19 +1051,43 @@ func defGroupAccessorBranches(obj *Object, sel *Perm, rels map[string]*Relation)
 		if len(r.Types) > 0 {
 			kind = r.Types[0]
 		}
-		branches = append(branches, groupAccessorBranch(obj.Table, obj.pk(), kind, g))
+		branches = append(branches, groupAccessorBranch(obj.Table, obj.pk(), kind, g, s.groupFlatName(obj, r, g)))
 	}
 	return branches
 }
 
 // groupAccessorBranch renders one GROUP enumeration branch: the transitive members of
 // the group named by the row's <Col>, as 'read' accessors of the relation's kind.
-// Joins the closure (group, member) to the object row on the row's group column —
-// exactly the membership the forward `<Closure>_member` definer tests, reversed.
-func groupAccessorBranch(table, pk, kind string, g ViaGroup) string {
+//
+// When the relation is materialized (flat != "" — the qualified auth.<obj>_<rel>_flat
+// table), the branch reverse-reads the trigger-maintained flat (resource_id →
+// transitive members) as a sargable point lookup on the resource index, instead of
+// joining the closure per call. The flat is `object row ⋈ closure` (the WS3
+// maintenance oracle proves flat == walk after every mutation), so the rows are the
+// SAME committed bytes the walk produces — no second evaluator, just a faster read.
+// Otherwise it joins the closure (group, member) to the object row on the row's group
+// column — exactly the membership the forward `<Closure>_member` definer tests,
+// reversed.
+func groupAccessorBranch(table, pk, kind string, g ViaGroup, flat string) string {
+	if g.Materialized && flat != "" {
+		return fmt.Sprintf(
+			"SELECT 'group'::text, '%s'::text, f.principal_id, 'read'::text\n    FROM %s f\n    WHERE f.resource_id = p_id",
+			kind, flat)
+	}
 	return fmt.Sprintf(
 		"SELECT 'group'::text, '%s'::text, c.%s, 'read'::text\n    FROM %s t\n    JOIN %s c ON c.%s = t.%s\n    WHERE t.%s = p_id",
 		kind, g.MemberCol, table, g.Closure, g.GroupCol, g.Col, pk)
+}
+
+// groupFlatName returns the qualified materialized-flat table for a via-group relation
+// (auth.<obj>_<rel>_flat), or "" when the relation is not materialized — so the
+// accessor (and, post-flip, RLS) walk the closure. It MUST agree with the name
+// EmitMaterializedFlats emits (qFlat = definerSchema . <objTable>_<relName>_flat).
+func (s *Spec) groupFlatName(obj *Object, r *Relation, g ViaGroup) string {
+	if !g.Materialized {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s_%s_flat", s.definerSchema(), obj.Table, r.Name)
 }
 
 // defClosureAccessorBranches renders the CLOSURE enumeration branches — one per
@@ -1179,7 +1203,7 @@ func (s *Spec) accessorBranchForTerm(obj *Object, t *Term, rels map[string]*Rela
 	case ViaGrant:
 		return grantAccessorBranch(&repr), true
 	case ViaGroup:
-		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr), true
+		return groupAccessorBranch(obj.Table, obj.pk(), kind, repr, s.groupFlatName(obj, r, repr)), true
 	case ViaClosure:
 		return closureAccessorBranch(obj.Table, obj.pk(), kind, repr), true
 	case ViaObject:
