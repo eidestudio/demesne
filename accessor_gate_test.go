@@ -162,20 +162,59 @@ func TestAccessorCoverage_ViaObject_NonReadBorrow_FailsClosed(t *testing.T) {
 	}
 }
 
-func TestAccessorCoverage_IntersectionExclusion_FailsClosed(t *testing.T) {
+// and/and-not over a NON-composable leaf (the @app_scope role plane) still fails closed.
+func TestAccessorCoverage_AndNot_NonComposableLeaf_FailsClosed(t *testing.T) {
 	obj := &Object{
 		Name: "doc", Table: "docs",
-		Relations: []*Relation{{Name: "owner", Repr: ViaColumn{Column: "owner_id"}}},
+		Relations: []*Relation{{Name: "grantee", Types: []string{"customer"}, Repr: ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}}},
 		Perms: []*Perm{selectPerm(
-			[]*Term{{Ident: "owner"}},
+			[]*Term{{Ident: "grantee"}, {Builtin: "app_scope"}},
 			&PermNode{Op: "and", Kids: []*PermNode{
-				{Op: "leaf", Term: &Term{Ident: "owner"}},
-				{Op: "not", Kids: []*PermNode{{Op: "leaf", Term: &Term{Ident: "owner"}}}},
+				{Op: "leaf", Term: &Term{Ident: "grantee"}},
+				{Op: "not", Kids: []*PermNode{{Op: "leaf", Term: &Term{Builtin: "app_scope"}}}},
 			}},
 		)},
 	}
-	if ok, reason := cover(obj); ok {
-		t.Errorf("an `and`/`and not` SELECT tree must fail closed, got covered (reason=%q)", reason)
+	if ok, _ := cover(obj); ok {
+		t.Error("and/not over a non-composable (@app_scope role-plane) leaf must fail closed")
+	}
+}
+
+// and/and-not over composable content relations now COMPOSES (covered): set algebra on
+// principal identity, keeping the base positive's provenance.
+func TestAccessorTree_AndNot_Composes(t *testing.T) {
+	g := ViaGrant{Table: "resource_acl", RecordCol: "resource_id", KindCol: "principal_kind", PrincipalCol: "principal_id", AccessCol: "access"}
+	grp := ViaGroup{Closure: "blocked_members", GroupCol: "group_id", MemberCol: "member_id", Col: "blocklist_id"}
+	obj := &Object{
+		Name: "doc", Table: "docs",
+		Relations: []*Relation{
+			{Name: "grantee", Types: []string{"customer"}, Repr: g},
+			{Name: "blocked", Types: []string{"customer"}, Repr: grp},
+		},
+		Perms: []*Perm{selectPerm(
+			[]*Term{{Ident: "grantee"}, {Ident: "blocked"}},
+			&PermNode{Op: "and", Kids: []*PermNode{
+				{Op: "leaf", Term: &Term{Ident: "grantee"}},
+				{Op: "not", Kids: []*PermNode{{Op: "leaf", Term: &Term{Ident: "blocked"}}}},
+			}},
+		)},
+	}
+	if ok, reason := cover(obj); !ok {
+		t.Fatalf("grantee AND NOT blocked should compose (covered), got: %s", reason)
+	}
+	sql, ok := (&Spec{Objects: []*Object{obj}}).accessorTreeSQL(obj, obj.Perms[0].Tree,
+		map[string]*Relation{"grantee": obj.Relations[0], "blocked": obj.Relations[1]})
+	if !ok {
+		t.Fatal("composer should succeed for composable content leaves")
+	}
+	for _, want := range []string{
+		"SELECT a.* FROM (",
+		"(a.principal_kind, a.principal_id) NOT IN (SELECT b.principal_kind, b.principal_id FROM (",
+		"blocked_members", // the negated group's reverse-read appears inside the NOT IN
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("composed and/not SQL missing %q:\n%s", want, sql)
+		}
 	}
 }
 
