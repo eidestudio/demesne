@@ -516,6 +516,50 @@ func (s *Spec) viaObjectCovered(vo ViaObject, seen map[string]bool) (bool, strin
 	return s.accessorCoverageSeen(other, seen)
 }
 
+// structuralAccessorCoverage reports whether the STRUCTURAL accessor enumerator
+// (level-entity / control plane) can soundly enumerate an object's SELECT permission.
+// structuralTermEnum enumerates role-walks, builtins (which add no principals), and
+// via-role / via-memberin relations; ANY other relation Repr it silently skips, and it
+// walks the flat term list so intersection/exclusion is ignored. So an enumerator that
+// emits some branches while a term goes unenumerated would under-report — fail closed.
+func structuralAccessorCoverage(obj *Object) (bool, string) {
+	rels := map[string]*Relation{}
+	for _, r := range obj.Relations {
+		rels[r.Name] = r
+	}
+	var sel *Perm
+	for _, pm := range obj.Perms {
+		if pm.Maps == "select" {
+			sel = pm
+			break
+		}
+	}
+	if sel == nil {
+		return true, ""
+	}
+	if op := accessorTreeOp(sel.Tree); op != "" {
+		return false, fmt.Sprintf("its SELECT permission uses %q, which the union enumerator cannot represent", op)
+	}
+	for _, t := range sel.Expr {
+		// builtins add no principals; a role-walk (WalkVerb) is enumerated regardless of
+		// the relation's Repr; a non-relation term carries no accessor.
+		if t == nil || t.Builtin != "" || t.WalkVerb != "" || t.Ident == "" {
+			continue
+		}
+		r := rels[t.Ident]
+		if r == nil {
+			continue
+		}
+		switch r.Repr.(type) {
+		case ViaRole, ViaMemberIn:
+			// enumerable by the structural path
+		default:
+			return false, fmt.Sprintf("relation %q (%T) is not enumerable by the structural accessor path (only via-role / via-memberin)", t.Ident, r.Repr)
+		}
+	}
+	return true, ""
+}
+
 // defEmitStructuralAccessors emits the structural accessor enumerators (Expand over
 // the role/staff CONTROL plane): for every level-entity object (project, tenant, …),
 // auth.<table>_accessors(p_id) enumerates who can administer the node — role-holders
@@ -539,6 +583,11 @@ func (s *Spec) defEmitStructuralAccessors(out *[]GenFn, seen map[string]bool) er
 			return err
 		}
 		if ok {
+			// Fail closed (EID-342 / WS1): the enumerator emits, but if a SELECT term
+			// went unenumerated it would under-report who can administer the node.
+			if cov, reason := structuralAccessorCoverage(obj); !cov {
+				return fmt.Errorf("object %q: cannot soundly enumerate structural accessors (auth.%s would under-report) — %s", obj.Name, name, reason)
+			}
 			seen[name] = true
 			*out = append(*out, d)
 		}
