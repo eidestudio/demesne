@@ -4,7 +4,15 @@
  * increment). Each corresponds to a spec in the Go test suite — names noted inline.
  */
 
-import type { Vocabulary, HoldsResolver, Pdp, Claims } from "../src/index.js";
+import type {
+  Vocabulary,
+  HoldsResolver,
+  Pdp,
+  Claims,
+  RoleAssignmentSurface,
+  GrantSurface,
+  ResourceAccessSurface,
+} from "../src/index.js";
 
 /** The `roles` vocabulary from holds_test.go's `holdsSpec` (nested preset + star + rank). */
 export const rolesVocab: Vocabulary = {
@@ -122,4 +130,143 @@ export const noIdentityClaims: Claims = {
   entries: [],
   subjects: [{ name: "svc", identifies: "" }],
   levels: [{ name: "tenant", claimKey: "tenant_id", virtual: false }],
+};
+
+// --- Layer 3: role-assignment surfaces (role_assignment_runtime_test.go) ------
+
+/** fullRoleStoreSpec — every optional write column declared. */
+export const fullRoleAssign: RoleAssignmentSurface = {
+  assignments: "role_assignments",
+  pk: "id",
+  kindCol: "principal_kind",
+  kindVal: "admin",
+  subjectCol: "principal_id",
+  roleCol: "role_id",
+  scopeCols: ["tenant_id", "project_id"],
+  revokedCol: "revoked_at",
+  grantedAtCol: "granted_at",
+  grantedByCol: "granted_by",
+  revokedByCol: "revoked_by",
+  extraCols: [],
+  rolesTable: "roles",
+  rolesId: "id",
+  keyCol: "key",
+  permsCol: "permissions",
+};
+
+/** minimalRoleStoreSpec — only the read columns; default id PK, no audit/perms. */
+export const minimalRoleAssign: RoleAssignmentSurface = {
+  assignments: "role_assignments",
+  pk: "id",
+  kindCol: "principal_kind",
+  kindVal: "admin",
+  subjectCol: "principal_id",
+  roleCol: "role_id",
+  scopeCols: ["tenant_id", "project_id"],
+  revokedCol: "revoked_at",
+  grantedAtCol: "",
+  grantedByCol: "",
+  revokedByCol: "",
+  extraCols: [],
+  rolesTable: "roles",
+  rolesId: "id",
+  keyCol: "key",
+  permsCol: "",
+};
+
+/** rpScopedRoleStoreSpec — full audit + an extra context column (client_id), no perms. */
+export const rpScopedRoleAssign: RoleAssignmentSurface = {
+  ...fullRoleAssign,
+  extraCols: ["client_id"],
+  permsCol: "",
+};
+
+/** The pk-override spec (assignments grants, pk grant_id, role_defs/ref/slug). */
+export const pkOverrideRoleAssign: RoleAssignmentSurface = {
+  assignments: "grants",
+  pk: "grant_id",
+  kindCol: "kind",
+  kindVal: "op",
+  subjectCol: "who",
+  roleCol: "role_ref",
+  scopeCols: ["tenant_id"],
+  revokedCol: "ended_at",
+  grantedAtCol: "",
+  grantedByCol: "",
+  revokedByCol: "",
+  extraCols: [],
+  rolesTable: "role_defs",
+  rolesId: "ref",
+  keyCol: "slug",
+  permsCol: "",
+};
+
+// --- Layer 3: level-grant surfaces (grant_runtime_test.go) --------------------
+
+/** fullGrantSpec — impersonation grant with active/expiry + full audit + a reason column. */
+export const fullGrant: GrantSurface = {
+  name: "impersonation",
+  level: "tenant",
+  table: "impersonation_grants",
+  granteeCol: "grantee_id",
+  levelCol: "tenant_id",
+  activeCol: "revoked_at",
+  expiresCol: "expires_at",
+  pk: "id",
+  grantedByCol: "granted_by",
+  revokedByCol: "revoked_by",
+  createdAtCol: "created_at",
+  extraCols: ["reason"],
+};
+
+/** minimalGrantSpec — only the reach columns; default id PK, hard-DELETE revoke. */
+export const minimalGrant: GrantSurface = {
+  name: "simple",
+  level: "tenant",
+  table: "simple_grants",
+  granteeCol: "grantee_id",
+  levelCol: "tenant_id",
+  activeCol: "",
+  expiresCol: "",
+  pk: "id",
+  grantedByCol: "",
+  revokedByCol: "",
+  createdAtCol: "",
+  extraCols: [],
+};
+
+/** A grant with two declared `column`s (reason, note) — declaration-order write/project. */
+export const extraColsGrant: GrantSurface = {
+  name: "g",
+  level: "tenant",
+  table: "edges",
+  granteeCol: "grantee_id",
+  levelCol: "tenant_id",
+  activeCol: "",
+  expiresCol: "",
+  pk: "id",
+  grantedByCol: "",
+  revokedByCol: "",
+  createdAtCol: "",
+  extraCols: ["reason", "note"],
+};
+
+// --- Layer 3: resource-ACL surface (access_runtime_test.go / adminOwnerSpec) ---
+
+/** adminOwnerSpec's `record` object — a discriminated (shared) grant store. */
+export const recordAccess: ResourceAccessSurface = {
+  table: "records",
+  scopeCols: ["tenant_id", "project_id"],
+  modeCol: "access_mode",
+  pk: "id",
+  readModes: ["public_project"],
+  grantKinds: ["customer"],
+  aclTable: "resource_acl",
+  recordCol: "resource_id",
+  kindCol: "principal_kind",
+  principalCol: "principal_id",
+  accessCol: "access",
+  discrimCol: "resource_type",
+  discrimVal: "record",
+  accessorFn: "auth.records_accessors",
 };

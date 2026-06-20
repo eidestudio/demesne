@@ -1,10 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { scopeContains, resolve, type RoleAssignment } from "../src/index.js";
+import { assignmentsSQL, scopeContains, resolve, type RoleAssignment } from "../src/index.js";
 import { rolesResolver, rolesResolverNoPerms } from "./fixtures.js";
 
 // Ports holds_test.go: TestScopeContainsMultiLevel, TestResolveMaterialized,
 // TestResolveExpandKey, TestResolveRootStrict, TestResolveMaterializedPassThrough,
 // TestResolveEmptyAndNil.
+
+describe("assignmentsSQL — the active-assignment read", () => {
+  it("projects the scope cols, role key, and the materialized perms column when declared", () => {
+    expect(assignmentsSQL(rolesResolver)).toBe(
+      "SELECT ra.tenant_id, ra.team_id, r.key, r.perms FROM role_assignments ra " +
+        "JOIN roles_tbl r ON r.id = ra.role_id WHERE ra.principal_kind = 'member' " +
+        "AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+    );
+  });
+  it("drops the perms column from the projection when undeclared", () => {
+    expect(assignmentsSQL(rolesResolverNoPerms)).toBe(
+      "SELECT ra.tenant_id, ra.team_id, r.key FROM role_assignments ra " +
+        "JOIN roles_tbl r ON r.id = ra.role_id WHERE ra.principal_kind = 'member' " +
+        "AND ra.principal_id = $1 AND ra.revoked_at IS NULL",
+    );
+  });
+});
 
 describe("scopeContains — root strict, deeper levels empty-wildcard", () => {
   const cases: Array<[string, string[], string[], boolean]> = [
