@@ -49,16 +49,39 @@ export interface Principal {
   scopes: Record<string, string>;
 }
 
+/** A subject's identity-key mapping (its `identifies` claim key, "" when it has none). */
+export interface SubjectIdentity {
+  name: string;
+  identifies: string;
+}
+
 /**
- * The resolved claims/session envelope config (defaults already applied by the emitter):
- * the GUC the policies read, its cast, and the non-BYPASSRLS connection role a session
- * assumes. Mirrors the Go `claimSetting()` / `claimRole()` defaulting
- * (`request.jwt.claims` / `json` / `authenticated`).
+ * One topology level's claim mapping. Includes VIRTUAL levels (which carry no scope
+ * claim) so `buildClaims` can reject a scope presented for one — `claimKey` is then
+ * unused. Mirrors Go `Level.claimKey()` / `Level.Virtual`.
  */
-export interface ClaimsConfig {
+export interface LevelClaim {
+  name: string;
+  claimKey: string;
+  virtual: boolean;
+}
+
+/**
+ * The claims/session projection (defaults already applied by the emitter): the GUC the
+ * policies read + its cast + the non-BYPASSRLS connection role, the claims contract
+ * (flat keys, byte-sorted) and its structured form, and the subject/level mappings
+ * `buildClaims` derives a session's claims from. Mirrors the Go `Spec` claims surface
+ * (`claimSetting()` / `claimRole()` / `ClaimsContract(Entries)()`), defaulting to
+ * `request.jwt.claims` / `json` / `authenticated`.
+ */
+export interface Claims {
   setting: string;
   cast: string;
   role: string;
+  contract: string[];
+  entries: ClaimEntry[];
+  subjects: SubjectIdentity[];
+  levels: LevelClaim[];
 }
 
 // --- Verb PDP + app read surface (Layer 2) ----------------------------------
