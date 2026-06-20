@@ -1,7 +1,8 @@
 /**
- * The holds-resolver COMPUTE (Layer 2) — `scopeContains` and `Resolve` from the Go
- * holds.go. Given the assignments the database returned (via the read SQL, added in a
- * later increment) it applies the scope-containment match and unions the matched
+ * The holds-resolver (Layer 2) — the read SQL (`assignmentsSQL`) plus the COMPUTE
+ * (`scopeContains` / `resolve`) from the Go holds.go. Given the assignments the database
+ * returned (via {@link assignmentsSQL}) it applies the scope-containment match and unions
+ * the matched
  * assignments' permissions into the effective set. Pure stdlib, no policy
  * re-evaluation: it folds rows the DB already returned. The result's `holds(perm)` IS
  * the callback `authorize` takes, so the full Layer-2 decision is
@@ -11,6 +12,24 @@
 import { goSort } from "./goCompat.js";
 import { presetPermissions } from "./vocabulary.js";
 import type { HoldsResolver, RoleAssignment } from "./types.js";
+
+/**
+ * The read: every ACTIVE role assignment a principal holds, across ALL scopes, projected
+ * as the scope columns (root→leaf), the role key, then — when declared — the materialized
+ * permissions column. $1 binds the principal id; the kind is inlined as a SQL literal. The
+ * caller executes it (under the principal's own claims for a self lookup, or as a trusted
+ * internal read for another subject) and feeds the rows into {@link resolve}. Mirrors Go
+ * `HoldsResolver.AssignmentsSQL`.
+ */
+export function assignmentsSQL(r: HoldsResolver): string {
+  const cols = r.scopeCols.map((c) => `ra.${c}`);
+  cols.push(`r.${r.keyCol}`);
+  if (r.permsCol !== "") cols.push(`r.${r.permsCol}`);
+  return (
+    `SELECT ${cols.join(", ")} FROM ${r.assignments} ra JOIN ${r.rolesTable} r ON r.${r.rolesId} = ra.${r.roleCol} ` +
+    `WHERE ra.${r.kindCol} = '${r.kindVal}' AND ra.${r.subjectCol} = $1 AND ra.${r.revokedCol} IS NULL`
+  );
+}
 
 /** A principal's resolved effective permission set at a scope. Mirrors Go `EffectivePerms`. */
 export interface EffectivePerms {

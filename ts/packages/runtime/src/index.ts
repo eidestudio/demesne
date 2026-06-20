@@ -15,4 +15,13 @@ export * from "./appSurface.js";
 export * from "./vocabulary.js";
 export * from "./holds.js";
 export * from "./delegation.js";
+export * from "./grants.js";
 export type * from "./types.js";
+
+// The Layer-3 write surfaces are exposed as namespaces — they mirror the Go receiver
+// methods (whose names collide across surfaces: grantInsert on both the level-grant and
+// resource-access surfaces, revokeSQL on both the role-assignment and level-grant ones).
+// Call sites read as `roleAssignments.assignInsert(surface, …)`.
+export * as roleAssignments from "./roleAssign.js";
+export * as levelGrants from "./levelGrant.js";
+export * as resourceAccess from "./access.js";
