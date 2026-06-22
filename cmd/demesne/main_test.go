@@ -1,8 +1,11 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +39,7 @@ func TestCLI_PureCommands(t *testing.T) {
 	if err := cmdValidate([]string{spec}); err != nil {
 		t.Errorf("validate: %v", err)
 	}
-	for _, kind := range []string{"rls", "definers", "triggers", "claims", "pdp", "all"} {
+	for _, kind := range []string{"rls", "definers", "triggers", "claims", "pdp", "framework", "all"} {
 		if err := cmdEmit([]string{spec, kind}); err != nil {
 			t.Errorf("emit %s: %v", kind, err)
 		}
@@ -47,4 +50,120 @@ func TestCLI_PureCommands(t *testing.T) {
 	if err := cmdValidate(nil); err == nil {
 		t.Error("validate with no spec should error")
 	}
+}
+
+func TestStripTargetFlag(t *testing.T) {
+	cases := []struct {
+		in     []string
+		target string
+		rest   []string
+	}{
+		{[]string{"s.demesne"}, "go", []string{"s.demesne"}},
+		{[]string{"s.demesne", "--target", "ts"}, "ts", []string{"s.demesne"}},
+		{[]string{"--target=ts", "s.demesne", "all"}, "ts", []string{"s.demesne", "all"}},
+		{[]string{"s.demesne", "claims", "--target", "ts"}, "ts", []string{"s.demesne", "claims"}},
+	}
+	for _, c := range cases {
+		gotT, gotR := stripTargetFlag(c.in)
+		if gotT != c.target || !reflect.DeepEqual(gotR, c.rest) {
+			t.Errorf("stripTargetFlag(%v) = %q,%v; want %q,%v", c.in, gotT, gotR, c.target, c.rest)
+		}
+	}
+}
+
+func TestCLI_EmitTS(t *testing.T) {
+	spec := writeSpec(t)
+
+	for _, kind := range []string{"claims", "pdp", "projections", "all"} {
+		if err := cmdEmit([]string{spec, kind, "--target", "ts"}); err != nil {
+			t.Errorf("emit %s --target ts: %v", kind, err)
+		}
+	}
+	// The language-neutral SQL/DDL kinds have no TS target.
+	for _, kind := range []string{"rls", "definers", "enablement", "triggers"} {
+		if err := cmdEmit([]string{spec, kind, "--target", "ts"}); err == nil {
+			t.Errorf("emit %s --target ts should error (language-neutral)", kind)
+		}
+	}
+	if err := cmdEmit([]string{spec, "--target", "rust"}); err == nil {
+		t.Error("an unknown --target should error")
+	}
+
+	// The =form works and the flag is order-independent; the output is a TS module.
+	out := captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "--target=ts", "projections"}); err != nil {
+			t.Fatalf("emit projections --target=ts: %v", err)
+		}
+	})
+	if !strings.Contains(out, `from "@demesne/runtime"`) || !strings.Contains(out, "export const claims: Claims") {
+		t.Errorf("projections output is not the expected TypeScript module:\n%s", out)
+	}
+}
+
+func TestCLI_EmitProfileSupabase(t *testing.T) {
+	spec := writeSpec(t)
+	out := captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "--profile", "supabase"}); err != nil {
+			t.Fatalf("emit --profile supabase: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"create or replace function public.demesne_access_token_hook(event jsonb)",
+		"grant execute on function public.demesne_access_token_hook to supabase_auth_admin;",
+		"if meta ? 'customer_id'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("supabase profile output missing %q:\n%s", want, out)
+		}
+	}
+	if err := cmdEmit([]string{spec, "--profile", "firebase"}); err == nil {
+		t.Error("an unknown --profile should error")
+	}
+}
+
+func TestCLI_EmitFramework(t *testing.T) {
+	spec := writeSpec(t)
+
+	// Default package "authz".
+	out := captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "framework"}); err != nil {
+			t.Fatalf("emit framework: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"package authz",
+		`demesne "github.com/eidestudio/demesne"`,
+		"type Claims struct {",
+		"func (docAccess) CanView(ctx context.Context, q Querier, id string) (Decision, error)",
+		"func CheckHandler(q Querier) http.HandlerFunc",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("framework output missing %q", want)
+		}
+	}
+
+	// A custom package name via the 3rd positional.
+	out = captureStdout(t, func() {
+		if err := cmdEmit([]string{spec, "framework", "access"}); err != nil {
+			t.Fatalf("emit framework access: %v", err)
+		}
+	})
+	if !strings.Contains(out, "package access") {
+		t.Errorf("custom package name not honored:\n%s", out)
+	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	_ = w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
 }
