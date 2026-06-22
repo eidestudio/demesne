@@ -50,7 +50,7 @@ isolation** — proving the emitted policies actually isolate — in two halves:
   the §6.2 scope-column model fails closed between siblings and grants
   unconditional reach only to a virtual-anchored subject — independent of the
   emitted SQL, no database;
-- an adopter.s **SQL-level** forward-isolation gate (where the DB is,
+- an adopter's **SQL-level** forward-isolation gate (where the DB is,
   `demesne_isolation_test.go`): it seeds sibling tenants + customers + records of
   every access mode and drives real principals against the LIVE generated
   policies, asserting tenant / project / owner / operator-grant (incl. expired) /
@@ -109,11 +109,11 @@ That is deliberate. The strongest possible test of a security generator is
 **differential equivalence**: apply the generated artifacts to a real database
 in a rolled-back transaction, read back `pg_policies` / `pg_get_functiondef`, and
 assert the live objects equal the generated ones byte-for-byte. That oracle —
-along with a platform's actual spec and its generated migrations — lives in the
-*platform* repo, where the database is. Verification belongs where it can run.
+along with an adopter's actual spec and its generated migrations — lives in the
+adopter's repo, where the database is. Verification belongs where it can run.
 This module's own tests prove the **language and the emitter mechanics** on
 synthetic specs; see [`examples/example.demesne`](examples/example.demesne) for
-one complete, annotated worked instance.
+one complete worked instance.
 
 ## Usage
 
@@ -131,8 +131,7 @@ claims, err := spec.ClaimsContract()   // the JWT claims the policies read
 
 ## The spec language
 
-See [`examples/example.demesne`](examples/example.demesne) for a fully worked,
-commented spec (a fictional document app). In brief:
+See [`examples/example.demesne`](examples/example.demesne) for a fully worked spec (a fictional document app). In brief:
 
 | Block | Declares |
 | --- | --- |
@@ -160,3 +159,7 @@ go build ./...
 go vet ./...
 go test ./...
 ```
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
