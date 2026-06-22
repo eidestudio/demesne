@@ -146,6 +146,21 @@ See [`examples/example.demesne`](examples/example.demesne) for a fully worked sp
 Each permission names the layer(s) it compiles to (`@rls`, `@pdp`, `@kernel`) and,
 for RLS, the SQL command it maps to (`select`/`insert`/`update`/`delete`).
 
+## Canonical examples — the spec, not the SQL
+
+The hard patterns from the Zanzibar / Keto literature are each a few lines of `.demesne` that
+compile to the RLS you would otherwise hand-write (and get subtly wrong). Each ships with a
+test asserting the emitted policy actually encodes the reachability — running proof, not prose:
+
+| Pattern | Spec | Compiles to |
+| --- | --- | --- |
+| Folder → document inheritance (unbounded nesting) | [`inheritance.demesne`](examples/canonical/inheritance.demesne) | a `SECURITY DEFINER` reachability lookup over a trigger-maintained transitive-closure table — a viewer of any ancestor folder can read the document |
+| Groups of groups (transitive membership) | [`groups.demesne`](examples/canonical/groups.demesne) | a group-closure check — membership flows through nested groups |
+| Role-based access control | [`rbac.demesne`](examples/canonical/rbac.demesne) | role-resolution definers + the rank ladder (viewer / editor / owner) gating `select` vs `update` |
+| `viewer ∩ member − banned` (boolean algebra) | [`boolean.demesne`](examples/canonical/boolean.demesne) | one RLS predicate intersecting viewer and member and excluding the banned set |
+
+Proof: `go test . -run TestCanonical` (see the `canonical_*_test.go` files).
+
 ## How it compares
 
 Demesne is a Zanzibar-class ReBAC model whose enforcement compiles into Postgres RLS rather
