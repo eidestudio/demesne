@@ -24,8 +24,8 @@ USAGE:
   demesne introspect <dsn>                     summarise the live schema (tables/columns/FKs)
   demesne scaffold   [-i] <dsn>                generate a STARTER spec from the schema (-i: interactive)
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
-  demesne diff     <spec.demesne> <dsn>        report generated-vs-live policy drift (surface)
-  demesne coverage <spec.demesne> <dsn>        list live tables with NO governing object (ungoverned → no RLS)
+  demesne diff     <spec.demesne> <dsn> [--exit-code]   generated-vs-live policy drift; --exit-code fails (exit 1) on any drift (CI guard)
+  demesne coverage <spec.demesne> <dsn> [--exit-code]   ungoverned tables (no object → no RLS); --exit-code fails (exit 1) if any (CI guard)
 
 <dsn> may be omitted to use $DATABASE_URL. A Postgres connection string, e.g.
   postgres://user:pass@host:5432/db
@@ -197,8 +197,22 @@ func stripFlag(args []string, name, def string) (string, []string) {
 	return val, out
 }
 
+func stripBoolFlag(args []string, name string) (bool, []string) {
+	found := false
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--"+name {
+			found = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return found, out
+}
+
 func stripTargetFlag(args []string) (string, []string)  { return stripFlag(args, "target", "go") }
 func stripProfileFlag(args []string) (string, []string) { return stripFlag(args, "profile", "") }
+func stripExitCodeFlag(args []string) (bool, []string)  { return stripBoolFlag(args, "exit-code") }
 
 func emitProfile(s *demesne.Spec, profile string) error {
 	switch profile {
@@ -478,6 +492,7 @@ func cmdCheck(args []string) error {
 }
 
 func cmdCoverage(args []string) error {
+	exitCode, args := stripExitCodeFlag(args)
 	if err := need(args, 1, "<spec.demesne>"); err != nil {
 		return err
 	}
@@ -502,10 +517,14 @@ func cmdCoverage(args []string) error {
 	if len(cov.Ungoverned) == 0 {
 		fmt.Println("ok: every live table is governed by an object or referenced as a policy-free store")
 	}
+	if exitCode {
+		return ungovernedExit(cov.Ungoverned)
+	}
 	return nil
 }
 
 func cmdDiff(args []string) error {
+	exitCode, args := stripExitCodeFlag(args)
 	if err := need(args, 1, "<spec.demesne>"); err != nil {
 		return err
 	}
@@ -553,6 +572,9 @@ func cmdDiff(args []string) error {
 	if len(missing) == 0 && len(orphan) == 0 {
 		fmt.Printf("in sync: %d generated policies all present, no orphans across %d governed tables\n", len(gen), len(governed))
 	}
+	if exitCode {
+		return driftExit(missing, orphan)
+	}
 	return nil
 }
 
@@ -563,4 +585,18 @@ func keys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func driftExit(missing, orphan []string) error {
+	if len(missing)+len(orphan) > 0 {
+		return fmt.Errorf("policy drift: %d generated-but-missing, %d orphan — the live database is not the spec's; the spec must be the only source of policy", len(missing), len(orphan))
+	}
+	return nil
+}
+
+func ungovernedExit(ungoverned []string) error {
+	if len(ungoverned) > 0 {
+		return fmt.Errorf("%d ungoverned table(s) — no object governs them, so any RLS on them is hand-authored; model each or mark it a policy-free store", len(ungoverned))
+	}
+	return nil
 }
