@@ -71,6 +71,45 @@ func TestStripTargetFlag(t *testing.T) {
 	}
 }
 
+func TestStripExitCodeFlag(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want bool
+		rest []string
+	}{
+		{[]string{"s.demesne", "db"}, false, []string{"s.demesne", "db"}},
+		{[]string{"s.demesne", "db", "--exit-code"}, true, []string{"s.demesne", "db"}},
+		{[]string{"--exit-code", "s.demesne", "db"}, true, []string{"s.demesne", "db"}},
+	}
+	for _, c := range cases {
+		got, rest := stripExitCodeFlag(c.in)
+		if got != c.want || !reflect.DeepEqual(rest, c.rest) {
+			t.Errorf("stripExitCodeFlag(%v) = %v,%v; want %v,%v", c.in, got, rest, c.want, c.rest)
+		}
+	}
+}
+
+func TestDriftExit(t *testing.T) {
+	if err := driftExit(nil, nil); err != nil {
+		t.Errorf("no drift should not fail, got %v", err)
+	}
+	if err := driftExit([]string{"docs.docs_select"}, nil); err == nil {
+		t.Error("a generated-but-missing policy must fail under --exit-code")
+	}
+	if err := driftExit(nil, []string{"docs.legacy_hand_written"}); err == nil {
+		t.Error("an orphan (hand-authored) policy must fail under --exit-code")
+	}
+}
+
+func TestUngovernedExit(t *testing.T) {
+	if err := ungovernedExit(nil); err != nil {
+		t.Errorf("no ungoverned tables should not fail, got %v", err)
+	}
+	if err := ungovernedExit([]string{"secrets"}); err == nil {
+		t.Error("an ungoverned table must fail under --exit-code")
+	}
+}
+
 func TestCLI_EmitTS(t *testing.T) {
 	spec := writeSpec(t)
 
