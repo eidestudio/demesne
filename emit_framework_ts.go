@@ -82,7 +82,7 @@ func (g *fwTSGen) assemble() string {
 		values = append(values, "resolve")
 	}
 	sort.Strings(values)
-	fmt.Fprintf(&head, "import { %s } from \"@demesne/runtime\";\n", strings.Join(values, ", "))
+	fmt.Fprintf(&head, "import { %s } from \"@foir/demesne\";\n", strings.Join(values, ", "))
 
 	var types []string
 	if g.needEff {
@@ -96,7 +96,7 @@ func (g *fwTSGen) assemble() string {
 	}
 	if len(types) > 0 {
 		sort.Strings(types)
-		fmt.Fprintf(&head, "import type { %s } from \"@demesne/runtime\";\n", strings.Join(types, ", "))
+		fmt.Fprintf(&head, "import type { %s } from \"@foir/demesne\";\n", strings.Join(types, ", "))
 	}
 
 	head.WriteString("\nexport { Decision };\n\n")

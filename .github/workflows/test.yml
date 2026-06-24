@@ -40,3 +40,27 @@ jobs:
         with:
           version: v2.11.4
           working-directory: cmd/demesne
+
+  ts:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: build
+        run: pnpm -r build
+      - name: typecheck
+        run: pnpm -r typecheck
+      - name: test
+        run: pnpm -r test

@@ -5,6 +5,9 @@
 /dist/
 coverage.*
 
+# npm release staging (generated from dist/ at release time)
+/npm/dist/
+
 # Editor / OS
 .DS_Store
 .idea/

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Client } from "pg";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildClaims, listResourcesSQL } from "@demesne/runtime";
+import { buildClaims, listResourcesSQL } from "@foir/demesne";
 import { claims, appSurface } from "../generated/supabase/projection.js";
 import { pgCtlAvailable, startCluster, type Cluster } from "../src/pg.js";
 

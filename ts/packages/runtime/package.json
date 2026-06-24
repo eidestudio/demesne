@@ -1,8 +1,26 @@
 {
-  "name": "@demesne/runtime",
+  "name": "@foir/demesne",
   "version": "0.0.0",
   "description": "Demesne authorization runtime — claims minting, the verb PDP, the holds-resolver, and the Layer-2/3 SQL builders, reproduced from the same projection the Go engine emits. Zero runtime dependencies.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eidestudio/demesne.git",
+    "directory": "ts/packages/runtime"
+  },
+  "homepage": "https://github.com/eidestudio/demesne#readme",
+  "bugs": "https://github.com/eidestudio/demesne/issues",
+  "keywords": [
+    "authorization",
+    "rls",
+    "postgres",
+    "rebac",
+    "pdp"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

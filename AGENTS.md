@@ -20,7 +20,7 @@ and TypeScript. There is no running authorization service; enforcement lives in 
   module so the engine stays standard-library only.
 - `examples/` — worked `.demesne` specs plus committed generated packages (`examples/authz`,
   `examples/supabaseauthz`) that serve as compile proofs and golden references.
-- `ts/` — a pnpm workspace: `@demesne/runtime` (a hand-written zero-dependency TypeScript
+- `ts/` — a pnpm workspace: `@foir/demesne` (a hand-written zero-dependency TypeScript
   runtime), the TypeScript emit target, and an example app.
 
 ## Build, test, lint

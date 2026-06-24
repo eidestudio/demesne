@@ -1,0 +1,87 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  goreleaser:
+    name: CLI binaries + GitHub release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 1
+
+  npm-runtime:
+    name: Publish @foir/demesne
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: pnpm
+          cache-dependency-path: ts/pnpm-lock.yaml
+      - name: install
+        run: pnpm install --frozen-lockfile
+        working-directory: ts
+      - name: set version
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+        working-directory: ts/packages/runtime
+      - name: build
+        run: pnpm --filter @foir/demesne build
+        working-directory: ts
+      - name: publish
+        run: npm publish --provenance --access public
+        working-directory: ts/packages/runtime
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  npm-cli:
+    name: Publish @foir/demesne-cli
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+      - name: stage packages
+        run: node npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}"
+      - name: publish platform packages then launcher
+        run: |
+          for dir in npm/dist/cli-*; do
+            npm publish "$dir" --provenance --access public
+          done
+          npm publish npm/dist/cli --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

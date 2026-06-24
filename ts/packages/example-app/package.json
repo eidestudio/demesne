@@ -1,8 +1,8 @@
 {
-  "name": "@demesne/example-app",
+  "name": "@foir/demesne-example-app",
   "version": "0.0.0",
   "private": true,
-  "description": "Demesne TypeScript worked example — stands up a real Postgres, applies the emitted RLS, and round-trips the @demesne/runtime builders against it.",
+  "description": "Demesne TypeScript worked example — stands up a real Postgres, applies the emitted RLS, and round-trips the @foir/demesne builders against it.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@demesne/runtime": "workspace:*",
+    "@foir/demesne": "workspace:*",
     "pg": "^8.13.1"
   },
   "devDependencies": {

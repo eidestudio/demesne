@@ -16,7 +16,7 @@ USAGE:
   demesne validate <spec.demesne>              parse + validate a spec
   demesne emit     <spec.demesne> [kind]       print generated SQL/Go
                                                kind: rls|definers|enablement|triggers|claims|pdp|framework|all (default all)
-                                               --target ts: emit TypeScript (@demesne/runtime)
+                                               --target ts: emit TypeScript (@foir/demesne)
                                                             kind: claims|pdp|projections|framework|all
                                                --profile supabase: emit the Supabase
                                                             deployment profile (access-token hook)
@@ -26,10 +26,13 @@ USAGE:
   demesne check    <spec.demesne> <dsn>        validate the spec, bind it to the live schema, check the RLS role
   demesne diff     <spec.demesne> <dsn> [--exit-code]   generated-vs-live policy drift; --exit-code fails (exit 1) on any drift (CI guard)
   demesne coverage <spec.demesne> <dsn> [--exit-code]   ungoverned tables (no object → no RLS); --exit-code fails (exit 1) if any (CI guard)
+  demesne version                              print the build version
 
 <dsn> may be omitted to use $DATABASE_URL. A Postgres connection string, e.g.
   postgres://user:pass@host:5432/db
 `
+
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -52,6 +55,9 @@ func main() {
 		err = cmdDiff(os.Args[2:])
 	case "coverage":
 		err = cmdCoverage(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		return
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
