@@ -86,6 +86,7 @@ jobs:
         run: node npm/scripts/build-npm.mjs "${GITHUB_REF_NAME#v}"
       - name: publish platform packages then launcher
         run: |
+          set -euo pipefail
           for dir in npm/dist/cli-*; do
             npm publish "$dir" --provenance --access public
           done
