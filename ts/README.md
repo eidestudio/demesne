@@ -30,17 +30,17 @@ The framework module bakes the same per-spec SQL the Go `EmitFramework` bakes. B
 
 ## Gating UI affordances
 
-`caps(held)` turns the verb-gate vocabulary into a typed, synchronous boolean tree — no magic strings, no `Decision` unwrapping. Resolve `held` once, then read a boolean per verb. It is a UI hint only: enforcement stays the RLS floor and the verb gate, so removing a `caps` check never grants access — the database still says no.
+`caps(held)` projects the rolestore vocabulary's `domain:verb` permissions into a typed, synchronous boolean tree (`caps(held).docs.publish` from `docs:publish`) — no magic strings, no `Decision` unwrapping. Resolve `held` once, then read a boolean per permission. It is a UI hint only: enforcement stays the RLS floor and the verb gate, so removing a `caps` check never grants access — the database still says no.
 
 ```ts
 const c = caps(held);
 
-{c.doc.publish && <PublishButton />}       // React
-{#if c.doc.publish}<PublishButton />{/if}  // Svelte
-<PublishButton v-if="c.doc.publish" />     // Vue
+{c.docs.publish && <PublishButton />}       // React
+{#if c.docs.publish}<PublishButton />{/if}  // Svelte
+<PublishButton v-if="c.docs.publish" />     // Vue
 ```
 
-The Go surface mirrors it as `Caps(held).Doc.Publish`. `check(object, verb, id)` covers the row verbs; a verb-gate verb passed to `check` throws and points you to `caps` / `can<Verb>(held)` rather than silently answering "ungoverned".
+The Go surface mirrors it as `Caps(held).Docs.Publish`. Parameterized permissions (a `*` model segment, e.g. `records:write:*`) get no static field — a banner lists them; check those with raw `held.holds(...)`. `check(object, verb, id)` covers the row verbs; a verb-gate verb passed to `check` throws and points you to `can<Verb>(held)` rather than silently answering "ungoverned".
 
 ## Packages
 

@@ -36,7 +36,7 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		}
 		g.object(o, obj)
 	}
-	g.capsFunc()
+	emittedCaps := map[string]bool{}
 	for _, rs := range s.RoleStores {
 		suffix := ""
 		if len(s.RoleStores) > 1 {
@@ -44,6 +44,16 @@ func (s *Spec) EmitFramework(pkg string) (string, error) {
 		}
 		if err := g.holds(rs, suffix); err != nil {
 			return "", err
+		}
+		v, err := s.rolestoreVocab(rs)
+		if err != nil {
+			return "", err
+		}
+		if v != nil && !emittedCaps[v.Name] {
+			emittedCaps[v.Name] = true
+			if err := g.vocabCapsFunc(v, suffix); err != nil {
+				return "", err
+			}
 		}
 	}
 	g.checkFunc()
@@ -100,19 +110,18 @@ type fwGen struct {
 	b         strings.Builder
 	checks    []fwCheck
 	pdpChecks []fwCheck
-	capsObjs  []capsObj
 }
 
 type fwCheck struct{ object, verb, method string }
 
-type capsObj struct {
-	exp   string
-	verbs []capsVerb
+type vocabDomain struct {
+	exp    string
+	fields []vocabField
 }
 
-type capsVerb struct {
+type vocabField struct {
 	exp  string
-	expr string
+	perm string
 }
 
 func (g *fwGen) header() {
@@ -218,14 +227,12 @@ func (g *fwGen) object(o AppObjectSurface, obj *Object) {
 	fmt.Fprintf(&g.b, "type %s struct{}\n\n", recv)
 	fmt.Fprintf(&g.b, "var %s = %s{}\n\n", exp, recv)
 
-	co := capsObj{exp: exp}
 	for _, pm := range obj.Perms {
 		verb := goExport(pm.Verb)
 		switch {
 		case containsStr(pm.Layers, "pdp"):
 			g.pdpCan(recv, pm)
 			g.pdpChecks = append(g.pdpChecks, fwCheck{object: o.Object, verb: pm.Verb})
-			co.verbs = append(co.verbs, capsVerb{exp: verb, expr: capsExpr(pm)})
 		case pm.Maps == "select":
 			g.rowCan(recv, exp, o.Object, pm.Verb, "Can"+verb, o.CheckSQL())
 		case pm.Maps == "update":
@@ -234,9 +241,6 @@ func (g *fwGen) object(o AppObjectSurface, obj *Object) {
 			}
 			g.rowCan(recv, exp, o.Object, pm.Verb, "Can"+verb, o.EditCheckSQL)
 		}
-	}
-	if len(co.verbs) > 0 {
-		g.capsObjs = append(g.capsObjs, co)
 	}
 
 	listSQL := o.ListResourcesSQL()
@@ -326,45 +330,81 @@ func (g *fwGen) checkFunc() {
 	g.b.WriteString("\tdefault:\n\t\treturn NotGoverned, nil\n\t}\n}\n\n")
 }
 
-func capsExpr(pm *Perm) string {
-	var checks []string
-	for _, t := range pm.Expr {
-		if t.Ident != "" {
-			checks = append(checks, fmt.Sprintf("held.Holds(%q)", t.Ident))
+func vocabCapsTree(perms []string) (domains []vocabDomain, skipped []string, err error) {
+	idx := map[string]int{}
+	seen := map[string]bool{}
+	for _, p := range perms {
+		if strings.ContainsRune(p, '*') {
+			skipped = append(skipped, p)
+			continue
 		}
+		seg0, rest, found := strings.Cut(p, ":")
+		if !found || rest == "" {
+			skipped = append(skipped, p)
+			continue
+		}
+		dexp, fexp := goExport(seg0), goExport(rest)
+		key := dexp + "." + fexp
+		if seen[key] {
+			return nil, nil, fmt.Errorf("vocab caps: %q collides on %s.%s", p, dexp, fexp)
+		}
+		seen[key] = true
+		di, ok := idx[dexp]
+		if !ok {
+			di = len(domains)
+			idx[dexp] = di
+			domains = append(domains, vocabDomain{exp: dexp})
+		}
+		domains[di].fields = append(domains[di].fields, vocabField{exp: fexp, perm: p})
 	}
-	if len(checks) == 0 {
-		return "true"
-	}
-	return strings.Join(checks, " && ")
+	return domains, skipped, nil
 }
 
-func (g *fwGen) capsFunc() {
-	if len(g.capsObjs) == 0 {
+func (g *fwGen) vocabCapsSkipBanner(skipped []string) {
+	if len(skipped) == 0 {
 		return
 	}
-	g.b.WriteString("type CapSet struct {\n")
-	for _, co := range g.capsObjs {
-		fmt.Fprintf(&g.b, "\t%s %sCaps\n", co.exp, co.exp)
+	g.b.WriteString("// These vocabulary permissions are parameterized (a '*' model segment) and have no static\n")
+	g.b.WriteString("// caps field — check them with held.Holds(\"<domain>:<verb>:<model>\") directly:\n")
+	for _, p := range skipped {
+		fmt.Fprintf(&g.b, "//   - %s\n", p)
+	}
+	g.b.WriteString("\n")
+}
+
+func (g *fwGen) vocabCapsFunc(v *Vocabulary, suffix string) error {
+	domains, skipped, err := vocabCapsTree(v.Permissions)
+	if err != nil {
+		return err
+	}
+	g.vocabCapsSkipBanner(skipped)
+	if len(domains) == 0 {
+		return nil
+	}
+	set := "CapSet" + suffix
+	fmt.Fprintf(&g.b, "type %s struct {\n", set)
+	for _, d := range domains {
+		fmt.Fprintf(&g.b, "\t%s %sCaps%s\n", d.exp, d.exp, suffix)
 	}
 	g.b.WriteString("}\n\n")
-	for _, co := range g.capsObjs {
-		fmt.Fprintf(&g.b, "type %sCaps struct {\n", co.exp)
-		for _, v := range co.verbs {
-			fmt.Fprintf(&g.b, "\t%s bool\n", v.exp)
+	for _, d := range domains {
+		fmt.Fprintf(&g.b, "type %sCaps%s struct {\n", d.exp, suffix)
+		for _, f := range d.fields {
+			fmt.Fprintf(&g.b, "\t%s bool\n", f.exp)
 		}
 		g.b.WriteString("}\n\n")
 	}
-	g.b.WriteString("func Caps(held demesne.EffectivePerms) CapSet {\n")
-	g.b.WriteString("\treturn CapSet{\n")
-	for _, co := range g.capsObjs {
-		fmt.Fprintf(&g.b, "\t\t%s: %sCaps{\n", co.exp, co.exp)
-		for _, v := range co.verbs {
-			fmt.Fprintf(&g.b, "\t\t\t%s: %s,\n", v.exp, v.expr)
+	fmt.Fprintf(&g.b, "func Caps%s(held demesne.EffectivePerms) %s {\n", suffix, set)
+	fmt.Fprintf(&g.b, "\treturn %s{\n", set)
+	for _, d := range domains {
+		fmt.Fprintf(&g.b, "\t\t%s: %sCaps%s{\n", d.exp, d.exp, suffix)
+		for _, f := range d.fields {
+			fmt.Fprintf(&g.b, "\t\t\t%s: held.Holds(%q),\n", f.exp, f.perm)
 		}
 		g.b.WriteString("\t\t},\n")
 	}
 	g.b.WriteString("\t}\n}\n\n")
+	return nil
 }
 
 func (g *fwGen) checkHandler() {

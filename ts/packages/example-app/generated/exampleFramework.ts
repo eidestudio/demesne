@@ -92,14 +92,6 @@ export const doc = {
   },
 };
 
-export function caps(held: EffectivePerms) {
-  return {
-    doc: {
-      publish: held.holds("docs:publish"),
-    },
-  };
-}
-
 export const holdsResolver: HoldsResolver = {
   "assignments": "role_grants",
   "kindCol": "grantee_kind",
@@ -167,6 +159,16 @@ export async function holds(q: Querier, principalId: string, scope: string[]): P
     permissions: holdsResolver.permsCol !== "" ? (row[holdsResolver.permsCol] as string[]) : [],
   }));
   return resolveHeld(assignments, scope);
+}
+
+export function caps(held: EffectivePerms) {
+  return {
+    docs: {
+      read: held.holds("docs:read"),
+      write: held.holds("docs:write"),
+      publish: held.holds("docs:publish"),
+    },
+  };
 }
 
 export async function check(q: Querier, object: string, verb: string, id: string): Promise<Decision> {

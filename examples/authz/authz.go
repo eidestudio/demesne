@@ -185,22 +185,6 @@ func (docAccess) CheckMany(ctx context.Context, q demesne.Querier, ids []string)
 	return out, rows.Err()
 }
 
-type CapSet struct {
-	Doc DocCaps
-}
-
-type DocCaps struct {
-	Publish bool
-}
-
-func Caps(held demesne.EffectivePerms) CapSet {
-	return CapSet{
-		Doc: DocCaps{
-			Publish: held.Holds("docs:publish"),
-		},
-	}
-}
-
 var holdsResolver = &demesne.HoldsResolver{
 	Assignments: "role_grants",
 	KindCol:     "grantee_kind",
@@ -249,6 +233,26 @@ func Holds(ctx context.Context, q demesne.Querier, principalID string, scope []s
 		return demesne.EffectivePerms{}, err
 	}
 	return ResolveHeld(assignments, scope)
+}
+
+type CapSet struct {
+	Docs DocsCaps
+}
+
+type DocsCaps struct {
+	Read    bool
+	Write   bool
+	Publish bool
+}
+
+func Caps(held demesne.EffectivePerms) CapSet {
+	return CapSet{
+		Docs: DocsCaps{
+			Read:    held.Holds("docs:read"),
+			Write:   held.Holds("docs:write"),
+			Publish: held.Holds("docs:publish"),
+		},
+	}
 }
 
 func Check(ctx context.Context, q demesne.Querier, object, verb, id string) (Decision, error) {
