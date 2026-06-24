@@ -39,7 +39,7 @@ func TestEmitTS_ReadSurfacesOnly(t *testing.T) {
 		t.Fatalf("EmitTS: %v", err)
 	}
 	mustContain(t, got, []string{
-		`import type { AppObjectSurface, Claims, Pdp } from "@demesne/runtime";`,
+		`import type { AppObjectSurface, Claims, Pdp } from "@foir/demesne";`,
 		"export const claims: Claims = {",
 		`"setting": "request.jwt.claims"`,
 		`"role": "authenticated"`,

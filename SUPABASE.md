@@ -77,7 +77,7 @@ When you provision or re-scope a user, set its `app_metadata` to the claims that
 `buildClaims` derives from your spec. You don't map any field names by hand:
 
 ```ts
-import { buildClaims } from "@demesne/runtime";
+import { buildClaims } from "@foir/demesne";
 import { claims } from "./app.demesne.projection.js"; // demesne emit app.demesne --target ts
 
 const app_metadata = buildClaims(claims, {
@@ -123,7 +123,7 @@ runs against a local Supabase-shaped Postgres instead:
 # Use the Session-pooler / IPv4 connection string from the dashboard (Connect → Session
 # pooler); the direct db.<ref>.supabase.co:5432 endpoint is IPv6-only.
 SUPABASE_DB_URL="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres" \
-  pnpm --filter @demesne/example-app exec vitest run supabase
+  pnpm --filter @foir/demesne-example-app exec vitest run supabase
 ```
 
 It checks three things: the hook lifts the contract keys, the RLS returns exactly the rows

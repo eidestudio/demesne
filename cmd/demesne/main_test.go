@@ -133,7 +133,7 @@ func TestCLI_EmitTS(t *testing.T) {
 			t.Fatalf("emit projections --target=ts: %v", err)
 		}
 	})
-	if !strings.Contains(out, `from "@demesne/runtime"`) || !strings.Contains(out, "export const claims: Claims") {
+	if !strings.Contains(out, `from "@foir/demesne"`) || !strings.Contains(out, "export const claims: Claims") {
 		t.Errorf("projections output is not the expected TypeScript module:\n%s", out)
 	}
 }
@@ -146,7 +146,7 @@ func TestCLI_EmitFrameworkTS(t *testing.T) {
 		}
 	})
 	for _, want := range []string{
-		`import { Decision, composeCan, mintClaimsValuesWithExtra } from "@demesne/runtime";`,
+		`import { Decision, composeCan, mintClaimsValuesWithExtra } from "@foir/demesne";`,
 		"export { Decision };",
 		"export interface Claims {",
 		"export const doc = {",

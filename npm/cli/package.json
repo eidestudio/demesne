@@ -1,0 +1,36 @@
+{
+  "name": "@foir/demesne-cli",
+  "version": "0.0.0",
+  "description": "Demesne CLI — compile one .demesne spec into Postgres RLS plus a typed app surface. Wraps the prebuilt Go binary for your platform.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eidestudio/demesne.git",
+    "directory": "npm/cli"
+  },
+  "homepage": "https://github.com/eidestudio/demesne#readme",
+  "bugs": "https://github.com/eidestudio/demesne/issues",
+  "keywords": [
+    "authorization",
+    "rls",
+    "postgres",
+    "rebac",
+    "cli"
+  ],
+  "bin": {
+    "demesne": "bin/demesne.cjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@foir/demesne-cli-darwin-arm64": "0.0.0",
+    "@foir/demesne-cli-darwin-x64": "0.0.0",
+    "@foir/demesne-cli-linux-arm64": "0.0.0",
+    "@foir/demesne-cli-linux-x64": "0.0.0",
+    "@foir/demesne-cli-win32-x64": "0.0.0"
+  }
+}

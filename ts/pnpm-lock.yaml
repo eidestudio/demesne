@@ -10,7 +10,7 @@ importers:
 
   packages/example-app:
     dependencies:
-      '@demesne/runtime':
+      '@foir/demesne':
         specifier: workspace:*
         version: link:../runtime
       pg:

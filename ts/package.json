@@ -2,7 +2,7 @@
   "name": "demesne-ts",
   "version": "0.0.0",
   "private": true,
-  "description": "TypeScript emit target for Demesne — the @demesne/runtime library + worked example.",
+  "description": "TypeScript emit target for Demesne — the @foir/demesne library + worked example.",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.33.0",
   "engines": {

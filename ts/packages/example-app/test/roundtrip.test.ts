@@ -9,7 +9,7 @@ import {
   checkManySQL,
   listResourcesSQL,
   resourceAccess,
-} from "@demesne/runtime";
+} from "@foir/demesne";
 import { claims, appSurface, resourceAccess as resourceAccessProj } from "../generated/projection.js";
 import { pgCtlAvailable, startCluster, type Cluster } from "../src/pg.js";
 

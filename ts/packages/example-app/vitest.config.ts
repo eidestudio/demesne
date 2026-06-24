@@ -10,7 +10,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@demesne/runtime": fileURLToPath(new URL("../runtime/src/index.ts", import.meta.url)),
+      "@foir/demesne": fileURLToPath(new URL("../runtime/src/index.ts", import.meta.url)),
     },
   },
 });

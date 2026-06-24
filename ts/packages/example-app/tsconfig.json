@@ -5,7 +5,7 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@demesne/runtime": ["../runtime/src/index.ts"]
+      "@foir/demesne": ["../runtime/src/index.ts"]
     }
   },
   "include": ["src", "test", "generated"]
