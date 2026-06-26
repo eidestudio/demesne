@@ -45,9 +45,9 @@ The Go surface mirrors it as `Caps(held).Docs.Publish`. Parameterized permission
 
 ## Gating on role tier
 
-`caps(held)` answers the verb axis ("can this principal *publish*?"). `roles(held)` answers the orthogonal role-tier axis ("is this principal a *platform admin*? a *tenant owner*?") — the thing a wildcard role (`tenant_owner = *`) or a global plane membership can't be recovered from the verb set. It projects the spec's role presets into a typed, synchronous boolean: the platform-plane roles first, then the rolestore's scoped roles. Same contract as `caps`: a UI hint only, with enforcement staying the RLS floor and the generated SQL definers.
+`caps(held)` answers the verb axis ("can this principal *publish*?"). `roles(held)` answers the orthogonal role-tier axis ("is this principal a *platform admin*? a *tenant owner*?"). A wildcard role (`tenant_owner = *`) or a global plane membership can't be read off the verb set, so this is a separate accessor over a separate held set. It projects the spec's role presets into a typed, synchronous boolean: the platform-plane roles first, then the rolestore's scoped roles. Like `caps`, it is a UI hint only. Enforcement stays the RLS floor and the generated SQL definers, so dropping a `roles` check never grants access.
 
-The input is a held-_roles_ set (`EffectiveRoles`), parallel to `caps`'s held-_verbs_ set. Build it either server-side from assignments (`holdsRoles(q, principalId, scope)` / `resolveHeldRoles(assignments, scope)`) or directly from a session's facts with `newEffectiveRoles([...])` — include the scoped role keys effective at the current scope, plus `"platform_admin"` if the session carries the platform-admin flag.
+The input is a held-_roles_ set (`EffectiveRoles`), the role-key counterpart of `caps`'s held-_verbs_ set. Build it server-side from assignments with `holdsRoles(q, principalId, scope)` or `resolveHeldRoles(assignments, scope)`, or build it straight from a session with `newEffectiveRoles([...])`. The session path takes the scoped role keys effective at the current scope, plus `"platform_admin"` when the session carries the platform-admin flag.
 
 ```ts
 const r = roles(held);
@@ -57,7 +57,7 @@ const r = roles(held);
 <InviteButton v-if="r.tenantOwner" />          // Vue
 ```
 
-The Go surface mirrors it as `Roles(held).PlatformAdmin` / `Roles(held).TenantOwner`. Scope semantics match the floor: a scoped role is held only at or below the scope it was granted at (root-strict), while a global plane role (granted with an empty scope) is held in every scope — exactly how a platform admin reaches across tenants.
+The Go surface mirrors it as `Roles(held).PlatformAdmin` and `Roles(held).TenantOwner`. Scope semantics match the floor. A scoped role is held only at or below the scope it was granted at (root-strict). A role granted with an empty scope is a global plane role, held in every scope, which is how a platform admin reaches across tenants.
 
 ## Packages
 
