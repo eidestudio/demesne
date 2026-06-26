@@ -254,6 +254,16 @@ pure helpers, and none of them re-evaluate policy in app code.
     set, handling `*`, nested preset refs, and fail-closed on cycles. The same logic
     seeds or validates a materialized `permissions` column. `RankOf` and
     `PresetsAtOrAbove` expose the rank ladder for delegation.
+- `demesne.ResolveRoles(assignments, scope) → EffectiveRoles` — the role-tier read,
+  the sibling of the holds resolver. `Resolve` answers "what permissions does this
+  principal hold here?"; `ResolveRoles` answers "what role tiers does it hold here?",
+  which a wildcard role (`owner = *`) or a global plane role can't be read off the
+  permission set. It reads the same assignment rows, keeping each role key whose scope
+  contains the query. A role granted at an empty scope is a global plane role, held in
+  every scope: the same boundary the generated `has_<plane>_role` definer enforces.
+  `EffectiveRoles.Holds` reports membership of one role key. `NewEffectiveRoles(keys...)`
+  builds the set straight from a session when you already know the held keys and don't
+  need a database read.
 - `Spec.RoleAssignmentSurface(rolestore)` — the control-plane write side of the
   rolestore, the dual of the holds resolver's read. It generates the assign,
   revoke, and list statements so you never hand-write them.
@@ -308,6 +318,7 @@ The generated package gives you:
 - a `Claims` struct and the session envelope;
 - per-object `Can<Verb>(ctx, q, id)` methods;
 - `Caps(held)` — a typed boolean per verb-gate permission, for UI affordances;
+- `Roles(held)` — a typed boolean per role tier, plane and scoped, for UI affordances;
 - scoped query builders, `ListResources` and `CheckMany`;
 - a per-rolestore holds resolver;
 - a reusable `Check(ctx, q, object, verb, id)`;
@@ -354,6 +365,14 @@ that has already run `SessionSetupSQL` and the `Claims.Mint()` result.
   call `Can<Verb>(held)`, or read `Caps(held)` for a boolean; passing one to `Check`
   returns a capability-gate error, never a silent `NotGoverned`. Insert and delete
   have no pre-flight check.
+- *Two affordance axes.* `Caps(held)` answers the verb axis: can this principal
+  publish? `Roles(held)` answers the role-tier axis: is this principal a platform
+  admin, or a tenant owner? A wildcard role or a global plane membership can't be read
+  off the verb set, so the two stay separate accessors over separate held sets. Both
+  are UI hints; the floor still decides. `Roles` reads a held-roles set
+  (`EffectiveRoles`), resolved by the generated `HoldsRoles` / `ResolveHeldRoles`, or
+  built from a session with `demesne.NewEffectiveRoles`. A preset at a `virtual` level
+  is a plane role and lists first; the rolestore's scoped presets follow.
 - *Multiple rolestores.* The holds surface is suffixed per rolestore (`HoldsStaff`,
   `HoldsOps`, …). A `@pdp` verb whose permission no rolestore vocabulary covers is
   flagged in a banner: nothing can produce its `held`, so resolve it yourself or
