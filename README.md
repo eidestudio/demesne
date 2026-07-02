@@ -1,4 +1,10 @@
-# Demesne
+<p align="center">
+  <img src="assets/logo.png" width="220" alt="Demesne, Zanzibar-style authz framework compiled to RLS">
+</p>
+
+<h1 align="center">Demesne</h1>
+
+---
 
 Write your authorization rules once, in a single spec file. Demesne compiles them into Postgres Row-Level Security, so the database enforces access on every query — a forgotten `WHERE` clause, a background job, or an ad-hoc `psql` session can't reach data the rules forbid.
 
